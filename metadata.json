@@ -1,0 +1,9 @@
+{
+  "name": "Straykin",
+  "description": "A community-driven PWA for tracking, locating, and caring for stray cats.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
