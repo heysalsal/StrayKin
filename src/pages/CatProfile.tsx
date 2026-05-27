@@ -5,6 +5,7 @@ import { useLazyAuth } from '../hooks/useLazyAuth';
 import { ChevronLeft, Plus, Check, User, Images, Edit2, Share2, ChevronDown, ChevronUp, History, X } from 'lucide-react';
 import { CatRecord } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
+import { AdBanner } from '../components/AdBanner';
 
 import Webcam from 'react-webcam';
 export default function CatProfile() {
@@ -14,6 +15,13 @@ export default function CatProfile() {
   const { user, loading, upgradeToGoogleAccount } = useLazyAuth();
   
   const [cat, setCat] = useState<CatRecord | null>(null);
+  const [showInterstitial, setShowInterstitial] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      setShowInterstitial(!user || user.isAnonymous);
+    }
+  }, [user, loading]);
   
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [mockHistory, setMockHistory] = useState<any[]>([]);
@@ -236,7 +244,7 @@ export default function CatProfile() {
 
   const handleCheckIn = async () => {
     if (loading) return;
-    if (!user || user.isAnonymous) {
+    if (!user) {
       setShowLoginModal(true);
       return;
     }
@@ -316,6 +324,18 @@ export default function CatProfile() {
 
   return (
     <div className="relative h-full w-full font-sans bg-black flex flex-col overflow-y-auto pb-32">
+      {showInterstitial && (
+         <div className="absolute inset-0 z-[100] bg-white flex flex-col items-center justify-center p-6 slide-in-from-bottom-full animate-in duration-500">
+           <button onClick={() => setShowInterstitial(false)} className="absolute top-6 right-6 w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-bold text-slate-500 hover:bg-slate-200">✕</button>
+           <h2 className="text-2xl font-black text-slate-800 mb-2">Sponsor</h2>
+           <p className="text-slate-500 text-sm font-medium text-center mb-8">Adsterra Advertisement</p>
+           <AdBanner format="rectangle" />
+           <button onClick={() => setShowInterstitial(false)} className="px-8 py-4 mt-8 bg-orange-500 text-white rounded-2xl font-bold shadow-lg shadow-orange-200">
+              Continue to {cat.name || 'Straykin'}
+           </button>
+         </div>
+      )}
+
       {/* Header Image */}
       <div className="relative w-full h-[85vh] shrink-0 bg-slate-800 rounded-b-[2.5rem] overflow-hidden shadow-2xl z-10 group">
         {displayPhotos.length > 0 ? (
@@ -731,14 +751,25 @@ export default function CatProfile() {
                     )}
                  </div>
                  {photoDataUrl && (
-                    <div className="flex items-center justify-between mt-3 px-1">
-                      <span className="text-sm font-bold text-slate-300">Add to Gallery</span>
-                      <button 
-                        onClick={() => setAddToGallery(!addToGallery)}
-                        className={`w-12 h-6 rounded-full relative transition-colors ${addToGallery ? 'bg-orange-500' : 'bg-slate-600'}`}
-                      >
-                        <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${addToGallery ? 'left-7' : 'left-1'}`}></span>
-                      </button>
+                    <div className="flex flex-col mt-3 px-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-300">Add to Gallery</span>
+                        <button 
+                          onClick={() => {
+                            if (user?.isAnonymous) {
+                               setShowLoginModal(true);
+                               return;
+                            }
+                            setAddToGallery(!addToGallery);
+                          }}
+                          className={`w-12 h-6 rounded-full relative transition-colors ${(addToGallery && !user?.isAnonymous) ? 'bg-orange-500' : 'bg-slate-600'} ${user?.isAnonymous ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${(addToGallery && !user?.isAnonymous) ? 'left-7' : 'left-1'}`}></span>
+                        </button>
+                      </div>
+                      {user?.isAnonymous && (
+                        <p className="text-[10px] text-slate-500 mt-1">Register to post photos to the community gallery.</p>
+                      )}
                     </div>
                  )}
               </div>

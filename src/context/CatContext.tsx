@@ -33,32 +33,11 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         if (data.length > 0) {
           setCats(data);
         } else {
-          throw new Error("No real data, using mock");
+          setCats([]);
         }
       } catch (e) {
-        console.warn("Failed to fetch from Firestore. Using mock data.");
-        // Make sure we have some mock data if Firestore fails
-        const nowSecs = Math.floor(Date.now() / 1000);
-        const past13HoursSecs = nowSecs - (13 * 3600);
-        setCats([
-          {
-            id: 'mock1', geohash: 'gcpuy', lat: 51.505, lng: -0.09,
-            name: 'Shadow',
-            names: [{ name: 'Shadow', votes: 5, suggestedBy: 'user1' }, { name: 'Batman', votes: 2, suggestedBy: 'user2' }],
-            color_tags: ['Black'],
-            genderVotes: { male: 5, female: 1, unknown: 0 },
-            last_check_in: { timestamp: { seconds: nowSecs, nanoseconds: 0 }, was_fed: true }
-          },
-          {
-            id: 'mock2', geohash: 'gcpu1', lat: 51.51, lng: -0.1,
-            name: 'Whiskers',
-            color_tags: ['Tabby'],
-            sterilizedVotes: 2,
-            last_check_in: { timestamp: { seconds: past13HoursSecs, nanoseconds: 0 }, was_fed: true }
-          }
-        ]);
-        // Also seed the big list at default lat lng immediately for testing!
-        setTimeout(() => seedMockArea(51.505, -0.09), 1000);
+        console.error("Failed to fetch from Firestore", e);
+        setCats([]);
       } finally {
         setLoading(false);
       }
@@ -112,119 +91,79 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // If we are using a mock config, skip addDoc to prevent pending promise hangs
-      // const docRef = await addDoc(collection(db, 'cats'), { ... })
-      throw new Error("Mock bypass");
-    } catch(e) {
-       const newMockCat: CatRecord = {
-         id: 'mock' + Date.now(),
+      const docRef = await addDoc(collection(db, 'cats'), {
          lat, lng, geohash,
-         name: details.name || undefined,
+         name: details.name || null,
          genderVotes: {
            male: details.gender === 'Male' ? 1 : 0,
            female: details.gender === 'Female' ? 1 : 0,
            unknown: details.gender === 'Unknown' ? 1 : 0,
          },
-         imageUrl: details.photoDataUrl || undefined,
-         status: details.status,
-         submissionId: details.submissionId,
+         imageUrl: details.photoDataUrl || null,
+         status: details.status || 'under_review',
+         submissionId: details.submissionId || null,
+         submittedBy: details.submittedBy || null,
          characteristics: details.tags ? details.tags.map((t: string) => ({ tag: t, votes: 1 })) : [],
          last_check_in: {
-            timestamp: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
-            was_fed: details.wasFed,
-            activities: details.activities,
-            notes: details.notes
+            timestamp: serverTimestamp(),
+            was_fed: details.wasFed || false,
+            activities: details.activities || [],
+            notes: details.notes || null
          }
-       };
-       setCats(prev => [...prev, newMockCat]);
-       return { status: 'created', id: newMockCat.id };
+      });
+      return { status: 'created', id: docRef.id };
+    } catch(e) {
+       console.error("Failed to add document", e);
+       throw e;
     }
   };
 
   const updateCatSighting = async (catId: string, details: any) => {
-    setCats(prev => prev.map(c => 
-      c.id === catId 
-        ? { 
-            ...c, 
-            name: details.name || c.name,
-            ...(details.status ? { status: details.status, submissionId: details.submissionId } : {}),
-            ...(details.photoDataUrl ? { imageUrl: details.photoDataUrl } : {}),
-            last_check_in: { 
-               ...c.last_check_in, 
-               timestamp: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
-               was_fed: details.wasFed,
-               activities: details.activities,
-               notes: details.notes
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      const docRef = doc(db, 'cats', catId);
+      
+      const updateData: any = {
+        'last_check_in.timestamp': serverTimestamp(),
+      };
+      
+      if (details.name) updateData.name = details.name;
+      if (details.status) updateData.status = details.status;
+      if (details.submissionId) updateData.submissionId = details.submissionId;
+      if (details.photoDataUrl) updateData.imageUrl = details.photoDataUrl;
+      if (details.wasFed !== undefined) updateData['last_check_in.was_fed'] = details.wasFed;
+      if (details.activities) updateData['last_check_in.activities'] = details.activities;
+      if (details.notes) updateData['last_check_in.notes'] = details.notes;
+
+      await updateDoc(docRef, updateData);
+      
+      // Update local state smoothly
+      setCats(prev => prev.map(c => 
+        c.id === catId 
+          ? { 
+              ...c, 
+              name: details.name || c.name,
+              ...(details.status ? { status: details.status, submissionId: details.submissionId } : {}),
+              ...(details.photoDataUrl ? { imageUrl: details.photoDataUrl } : {}),
+              last_check_in: { 
+                 ...c.last_check_in, 
+                 timestamp: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
+                 was_fed: details.wasFed !== undefined ? details.wasFed : c.last_check_in.was_fed,
+                 activities: details.activities || c.last_check_in.activities,
+                 notes: details.notes !== undefined ? details.notes : c.last_check_in.notes
+              } 
             } 
-          } 
-        : c
-    ));
-    return { status: 'updated' };
+          : c
+      ));
+      return { status: 'updated' };
+    } catch(e) {
+      console.error("Failed to update cat", e);
+      throw e;
+    }
   };
 
   const seedMockArea = (lat: number, lng: number) => {
-    const nowSecs = Math.floor(Date.now() / 1000);
-    const past13HoursSecs = nowSecs - (13 * 3600);
-    setCats(prev => {
-      if (prev.some(c => c.id === 'seeded_1')) return prev;
-      return [
-        ...prev,
-      {
-        id: 'seeded_1', 
-        name: 'Marmalade', 
-        names: [
-          { name: 'Marmalade', votes: 15, suggestedBy: 'alice' },
-          { name: 'Garfield', votes: 8, suggestedBy: 'bob' },
-          { name: 'Pumpkin', votes: 3, suggestedBy: 'charlie' }
-        ],
-        color_tags: ['Ginger', 'White'],
-        characteristics: [
-          { tag: 'Friendly', votes: 20 },
-          { tag: 'Vocal', votes: 15 },
-          { tag: 'Playful', votes: 8 },
-          { tag: 'Aggressive', votes: 1 }
-        ],
-        genderVotes: { male: 12, female: 2, unknown: 1 },
-        sterilizedVotes: 10,
-        gallery: [
-          { id: 'g1', url: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=200&h=200&fit=crop', timestamp: nowSecs - 86400, votes: 5 },
-          { id: 'g2', url: 'https://images.unsplash.com/photo-1495360010541-f48722b34f7d?w=200&h=200&fit=crop', timestamp: nowSecs - 86400 * 2, votes: 12 },
-          { id: 'g3', url: 'https://images.unsplash.com/photo-1543852786-1cf6624b9987?w=200&h=200&fit=crop', timestamp: nowSecs - 86400 * 3, votes: 1 },
-        ],
-        imageUrl: 'https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=200&h=200&fit=crop', 
-        geohash: 'xxx', lat: lat + 0.0002, lng: lng + 0.0001,
-        last_check_in: { timestamp: { seconds: nowSecs - 3600, nanoseconds: 0 }, was_fed: true, activities: ['Feed', 'Stroke'] }
-      },
-      {
-        id: 'seeded_2', name: 'Luna', imageUrl: 'https://images.unsplash.com/photo-1543852786-1cf6624b9987?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat - 0.0003, lng: lng - 0.0002,
-        last_check_in: { timestamp: { seconds: past13HoursSecs, nanoseconds: 0 }, was_fed: false }
-      },
-      {
-        id: 'seeded_3', name: 'Captain', imageUrl: 'https://images.unsplash.com/photo-1533743983669-94fa5c4338ec?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat + 0.0001, lng: lng - 0.0004,
-        last_check_in: { timestamp: { seconds: nowSecs - (5 * 3600), nanoseconds: 0 }, was_fed: true }
-      },
-      {
-        id: 'seeded_4', name: 'Oliver', imageUrl: 'https://images.unsplash.com/photo-1573865526739-10659fec78a5?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat - 0.0002, lng: lng + 0.0004,
-        last_check_in: { timestamp: { seconds: nowSecs - (2 * 3600), nanoseconds: 0 }, was_fed: false }
-      },
-      {
-        id: 'seeded_5', name: 'Milo', imageUrl: 'https://images.unsplash.com/photo-1495360010541-f48722b34f7d?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat + 0.0004, lng: lng - 0.0001,
-        last_check_in: { timestamp: { seconds: nowSecs - (8 * 3600), nanoseconds: 0 }, was_fed: true, activities: ['Play'] }
-      },
-      {
-        id: 'seeded_6', name: 'Leo', imageUrl: 'https://images.unsplash.com/photo-1518791841217-8f162f1e1131?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat + 0.0001, lng: lng + 0.0003,
-        last_check_in: { timestamp: { seconds: past13HoursSecs - 3600, nanoseconds: 0 }, was_fed: false }
-      },
-      {
-        id: 'seeded_7', name: 'Bella', imageUrl: 'https://images.unsplash.com/photo-1529778456981-64b54e7befdb?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat - 0.0004, lng: lng - 0.0003,
-        last_check_in: { timestamp: { seconds: nowSecs - 1800, nanoseconds: 0 }, was_fed: true, activities: ['Feed'] }
-      },
-      {
-        id: 'seeded_8', name: 'Charlie', imageUrl: 'https://images.unsplash.com/photo-1513360371669-4adf3dd7dff8?w=200&h=200&fit=crop', geohash: 'xxx', lat: lat + 0.0003, lng: lng - 0.0002,
-        last_check_in: { timestamp: { seconds: past13HoursSecs + 7200, nanoseconds: 0 }, was_fed: false }
-      }
-      ];
-    });
+    // Mock seeding disabled - using real database now
   };
 
   return (

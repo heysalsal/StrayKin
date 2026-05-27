@@ -7,7 +7,12 @@ import {
   onAuthStateChanged,
   browserLocalPersistence,
   setPersistence,
-  signOut
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  sendEmailVerification,
+  updateProfile,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
@@ -17,23 +22,6 @@ export function useLazyAuth() {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    // Check if we are using the mock API key to avoid throwing errors.
-    if (auth.app.options.apiKey === "MOCK_API_KEY") {
-      const persistedUser = localStorage.getItem('mock-user-state');
-      if (persistedUser) {
-        setUser(JSON.parse(persistedUser));
-      } else {
-        setUser({
-          uid: 'mock-anonymous-uid',
-          isAnonymous: true,
-          // @ts-ignore
-          providerData: []
-        } as User);
-      }
-      setLoading(false);
-      return;
-    }
-
     // Listen to auth state
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
@@ -45,16 +33,19 @@ export function useLazyAuth() {
           await setPersistence(auth, browserLocalPersistence);
           const cred = await signInAnonymously(auth);
           setUser(cred.user);
-        } catch (err) {
-          console.error("Anonymous auth failed (expected with mock config)", err);
-          // Set a mock user for MVP demo purposes
-          setUser({
-            uid: 'mock-anonymous-uid',
-            isAnonymous: true,
-            // @ts-ignore - Mocking just enough for UI
-            providerData: []
-          } as User);
-          setError(err instanceof Error ? err : new Error('Anonymous auth failed'));
+        } catch (err: any) {
+          if (err?.code === 'auth/admin-restricted-operation' || err?.message?.includes('admin-restricted-operation')) {
+            console.log(
+              "ℹ️ Firebase Anonymous Sign-In is currently disabled in your Firebase Console.\n" +
+              "To enable real persistent anonymous check-ins, go to:\n" +
+              "👉 Firebase Console > Authentication > Sign-in method > Enable 'Anonymous' provider.\n" +
+              "Falling back to local session-based user authentication."
+            );
+          } else {
+            console.error("Anonymous auth failed", err);
+          }
+          setUser(null);
+          setError(null);
         } finally {
           setLoading(false);
         }
@@ -65,17 +56,6 @@ export function useLazyAuth() {
   }, []);
 
   const logout = async () => {
-    if (auth.app.options.apiKey === "MOCK_API_KEY" || user?.uid === 'mock-google-uid') {
-      localStorage.removeItem('mock-user-state');
-      setUser({
-        uid: 'mock-anonymous-uid',
-        isAnonymous: true,
-        // @ts-ignore
-        providerData: []
-      } as User);
-      return;
-    }
-    
     try {
       await signOut(auth);
     } catch (err) {
@@ -84,22 +64,6 @@ export function useLazyAuth() {
   };
 
   const upgradeToGoogleAccount = async () => {
-    // For mock MVP handling
-    if (user?.uid === 'mock-anonymous-uid') {
-       console.log("Mock upgrading to Google account...");
-       const mockUser = {
-         uid: 'mock-google-uid',
-         isAnonymous: false,
-         displayName: 'Mock User',
-         email: 'user@example.com',
-         // @ts-ignore
-         providerData: [{ providerId: 'google.com' }]
-       } as User;
-       setUser(mockUser);
-       localStorage.setItem('mock-user-state', JSON.stringify(mockUser));
-       return;
-    }
-
     if (!auth.currentUser) return null;
     
     // If the user already has linked Google (not anonymous)
@@ -119,39 +83,45 @@ export function useLazyAuth() {
     }
   };
 
-  const registerWithEmail = async (email: string, password: string, displayName: string) => {
-    if (auth.app.options.apiKey === "MOCK_API_KEY" || user?.uid === 'mock-anonymous-uid') {
-      const mockUser = {
-         uid: `mock-user-${Date.now()}`,
-         isAnonymous: false,
-         displayName,
-         email,
-         // @ts-ignore
-         providerData: [{ providerId: 'password' }]
-      } as User;
-      setUser(mockUser);
-      localStorage.setItem('mock-user-state', JSON.stringify(mockUser));
-      return mockUser;
-    }
-    // Real implementation would use Firebase Auth email/password signup
-    // Not strictly needed for MVP unless backend connected
-  };
-
-  const loginWithEmail = async (email: string, password: string) => {
-    if (auth.app.options.apiKey === "MOCK_API_KEY" || user?.uid === 'mock-anonymous-uid') {
-      const mockUser = {
-         uid: `mock-user-${Date.now()}`,
-         isAnonymous: false,
-         displayName: email.split('@')[0],
-         email,
-         // @ts-ignore
-         providerData: [{ providerId: 'password' }]
-      } as User;
-      setUser(mockUser);
-      localStorage.setItem('mock-user-state', JSON.stringify(mockUser));
-      return mockUser;
+  const registerWithEmail = async (email: string, pin: string, displayName: string) => {
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email, pin);
+      await updateProfile(result.user, { displayName });
+      await sendEmailVerification(result.user);
+      setUser(result.user);
+      return { user: result.user, needsVerification: true };
+    } catch (err) {
+      console.error("Registration failed", err);
+      throw err;
     }
   };
 
-  return { user, loading, error, upgradeToGoogleAccount, registerWithEmail, loginWithEmail, logout };
+  const loginWithEmail = async (email: string, pin: string) => {
+    try {
+      const result = await signInWithEmailAndPassword(auth, email, pin);
+      setUser(result.user);
+      return { user: result.user, needsVerification: !result.user.emailVerified };
+    } catch (err) {
+      console.error("Login failed", err);
+      throw err;
+    }
+  };
+
+  const resendVerification = async () => {
+    if (auth.currentUser && !auth.currentUser.emailVerified) {
+      await sendEmailVerification(auth.currentUser);
+    }
+  };
+
+  const resetPassword = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (err) {
+      console.error("Password reset failed", err);
+      throw err;
+    }
+  };
+
+  return { user, loading, error, upgradeToGoogleAccount, registerWithEmail, loginWithEmail, logout, resendVerification, resetPassword };
 }
+

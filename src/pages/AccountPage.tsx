@@ -3,6 +3,7 @@ import { useCatDatabase } from '../hooks/useCatDatabase';
 import { useLazyAuth } from '../hooks/useLazyAuth';
 import { useNavigate } from 'react-router-dom';
 import { CustomIcon } from '../components/CustomIcon';
+import { AdBanner } from '../components/AdBanner';
 import { ArrowLeft, User as UserIcon, ShieldAlert, Plus, Award, Lock, Check, XCircle, Edit2, History, Settings, Menu, ExternalLink } from 'lucide-react';
 
 interface Pet {
@@ -54,8 +55,12 @@ export default function AccountPage() {
   const [userSettings, setUserSettings] = useState({ displayName: '', isAnonymous: false });
   useEffect(() => {
     const saved = localStorage.getItem('user_settings');
-    if (saved) setUserSettings(JSON.parse(saved));
-  }, []);
+    if (saved) {
+      setUserSettings(JSON.parse(saved));
+    } else if (user && user.displayName) {
+      setUserSettings(prev => ({ ...prev, displayName: user.displayName || '' }));
+    }
+  }, [user]);
 
   useEffect(() => {
     if (user && !user.isAnonymous) {
@@ -114,12 +119,14 @@ export default function AccountPage() {
 
   const handleAddPet = () => {
     if (!newPet.name) return;
+    const newId = `pet_${Date.now()}`;
     setProfile(prev => ({
       ...prev,
-      pets: [...prev.pets, { ...newPet, id: `pet_${Date.now()}` }]
+      pets: [...prev.pets, { ...newPet, id: newId }]
     }));
     setNewPet({ name: '', breed: '', color: '', age: '', gender: 'Unknown', lastLocation: '', status: 'private', photoDataUrl: undefined });
     setShowAddPet(false);
+    navigate(`/pet/${newId}`);
   };
 
   const handleLocatePet = () => {
@@ -204,6 +211,12 @@ export default function AccountPage() {
                </p>
              )}
              
+             {!user?.isAnonymous && user && !user.emailVerified && (
+               <div className="mt-2 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 flex items-center justify-between py-1 rounded-md border border-amber-200">
+                 <span>Email not verified</span>
+               </div>
+             )}
+             
              {user?.isAnonymous && (
                <button onClick={() => navigate('/login')} className="bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-full hover:bg-slate-800 transition-all mt-2 cursor-pointer">
                  Sign in to Save Progress
@@ -254,19 +267,34 @@ export default function AccountPage() {
         )}
       </div>
 
+      <div className="px-4 pt-4">
+        <AdBanner format="banner" />
+      </div>
+
       <div className="p-4 space-y-6">
         {activeTab === 'submissions' && (
           <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
              <h3 className="text-lg font-black text-slate-900 mb-1">My Submissions</h3>
              <p className="text-xs font-bold text-slate-400 mb-5">History of your reported Straykins</p>
              
-             {cats.filter(c => c.status === 'rejected' || c.status === 'under_review').length === 0 ? (
+             {user?.isAnonymous && (
+                <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-start gap-3">
+                  <ShieldAlert className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-bold text-orange-900">Guest Session</h4>
+                    <p className="text-xs text-orange-700 mt-1">Your submissions will disappear if you lose your session. Register now to keep your strays up to date.</p>
+                    <button onClick={() => navigate('/login')} className="mt-2 text-xs font-bold text-orange-600 hover:text-orange-700 underline">Register Now</button>
+                  </div>
+                </div>
+             )}
+             
+             {cats.filter(c => c.submittedBy === user?.uid).length === 0 ? (
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 text-center text-slate-500 font-medium text-sm">
                   No reports history.
                 </div>
              ) : (
                 <div className="space-y-3">
-                  {cats.filter(c => c.status === 'rejected' || c.status === 'under_review').map(cat => (
+                  {cats.filter(c => c.submittedBy === user?.uid).map(cat => (
                     <div key={cat.id} className={`rounded-2xl p-4 flex gap-4 border ${cat.status === 'rejected' ? 'bg-rose-50 border-rose-100' : 'bg-amber-50 border-amber-100'}`}>
                       <div className={`w-12 h-12 rounded-xl overflow-hidden shrink-0 flex items-center justify-center ${cat.status === 'rejected' ? 'bg-rose-100' : 'bg-amber-100'}`}>
                         {cat.imageUrl ? <img src={cat.imageUrl} className="w-full h-full object-cover grayscale" /> : <span className="opacity-50">😿</span>}
@@ -300,47 +328,73 @@ export default function AccountPage() {
             <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
                <h3 className="text-lg font-black text-slate-900 leading-tight mb-6">Profile Settings</h3>
                
-               <div className="space-y-4">
-                 <div>
-                   <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Display Name</p>
-                   <input 
-                     type="text" 
-                     value={userSettings.displayName}
-                     onChange={e => {
-                       const val = e.target.value;
-                       setUserSettings(prev => ({ ...prev, displayName: val }));
-                       localStorage.setItem('user_settings', JSON.stringify({ ...userSettings, displayName: val }));
-                     }}
-                     placeholder="e.g. StraySaver"
-                     className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-4 py-3 text-sm placeholder-slate-400 focus:outline-orange-500 focus:bg-white"
-                   />
+               {user?.isAnonymous ? (
+                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+                   <p className="text-sm font-bold text-slate-700 mb-2">Sign in to customize your profile</p>
+                   <p className="text-xs text-slate-500 mb-4">You can set your display name and hide submissions once registered.</p>
+                   <button onClick={() => navigate('/login')} className="px-4 py-2 bg-orange-500 text-white font-bold rounded-full text-xs shadow-md">Register Now</button>
                  </div>
-                 
-                 <div className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-xl">
+               ) : (
+                 <div className="space-y-4">
                    <div>
-                     <p className="text-sm font-bold text-slate-800">Anonymous Submissions</p>
-                     <p className="text-xs text-slate-500 mt-0.5">Hide full name on activity</p>
+                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Display Name</p>
+                     <input 
+                       type="text" 
+                       value={userSettings.displayName}
+                       onChange={e => {
+                         const val = e.target.value;
+                         setUserSettings(prev => ({ ...prev, displayName: val }));
+                         localStorage.setItem('user_settings', JSON.stringify({ ...userSettings, displayName: val }));
+                       }}
+                       onBlur={async () => {
+                         if (userSettings.displayName && user && !user.isAnonymous) {
+                           const { updateProfile } = await import('firebase/auth');
+                           try {
+                             await updateProfile(user, { displayName: userSettings.displayName });
+                           } catch (e) {
+                             console.error("Failed to update profile name", e);
+                           }
+                         }
+                       }}
+                       placeholder="e.g. StraySaver"
+                       className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-4 py-3 text-sm placeholder-slate-400 focus:outline-orange-500 focus:bg-white"
+                     />
                    </div>
-                   <button 
-                     onClick={() => {
-                       const isAnon = !userSettings.isAnonymous;
-                       setUserSettings(prev => ({ ...prev, isAnonymous: isAnon }));
-                       localStorage.setItem('user_settings', JSON.stringify({ ...userSettings, isAnonymous: isAnon }));
-                     }}
-                     className={`w-12 h-6 rounded-full relative transition-colors ${userSettings.isAnonymous ? 'bg-orange-500' : 'bg-slate-300'}`}
-                   >
-                     <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${userSettings.isAnonymous ? 'left-7' : 'left-1'}`}></span>
-                   </button>
+                   
+                   <div className="flex items-center justify-between bg-slate-50 border border-slate-100 p-4 rounded-xl">
+                     <div>
+                       <p className="text-sm font-bold text-slate-800">Anonymous Submissions</p>
+                       <p className="text-xs text-slate-500 mt-0.5">Hide full name on activity</p>
+                     </div>
+                     <button 
+                       onClick={() => {
+                         const isAnon = !userSettings.isAnonymous;
+                         setUserSettings(prev => ({ ...prev, isAnonymous: isAnon }));
+                         localStorage.setItem('user_settings', JSON.stringify({ ...userSettings, isAnonymous: isAnon }));
+                       }}
+                       className={`w-12 h-6 rounded-full relative transition-colors ${userSettings.isAnonymous ? 'bg-orange-500' : 'bg-slate-300'}`}
+                     >
+                       <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${userSettings.isAnonymous ? 'left-7' : 'left-1'}`}></span>
+                     </button>
+                   </div>
                  </div>
-               </div>
+               )}
             </div>
 
-            {!user?.isAnonymous && (
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
-                 <h3 className="text-lg font-black text-slate-900 mb-1">Achievements</h3>
-                 <p className="text-xs font-bold text-slate-400 mb-5">Your Neighborhood Caretaker stats</p>
-                 
-                 {profile.unlocked_badges.length === 0 ? (
+            <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
+               <h3 className="text-lg font-black text-slate-900 mb-1">Achievements</h3>
+               <p className="text-xs font-bold text-slate-400 mb-5">Your Neighborhood Caretaker stats</p>
+               
+               {user?.isAnonymous ? (
+                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+                   <div className="w-12 h-12 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-3">
+                     <Lock className="w-5 h-5" />
+                   </div>
+                   <h4 className="text-slate-800 font-bold mb-1">Achievements Locked</h4>
+                   <p className="text-xs text-slate-500 font-medium mb-3">Register to start earning badges for helping straykins.</p>
+                 </div>
+               ) : (
+                 profile.unlocked_badges.length === 0 ? (
                    <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 text-center">
                      <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-3">
                        <Award className="w-6 h-6" />
@@ -358,9 +412,9 @@ export default function AccountPage() {
                       {renderBadge('reliable_provider', 'Reliable', '30 Check-ins', 'checkins', 30)}
                       {renderBadge('neighborhood_feeder', 'Feeder', '150 Check-ins', 'checkins', 150)}
                     </div>
-                 )}
-              </div>
-            )}
+                 )
+               )}
+            </div>
           </div>
         )}
 
@@ -386,6 +440,7 @@ export default function AccountPage() {
               </button>
             </div>
 
+            {/* 
             <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-[2rem] p-6 shadow-md shadow-indigo-200 text-white flex flex-col items-center text-center">
                <h3 className="font-black text-xl mb-1">Support Straykin</h3>
                <p className="text-sm text-indigo-100 font-medium mb-4">Help us keep the servers running and our local strays fed. Be a hero.</p>
@@ -393,6 +448,7 @@ export default function AccountPage() {
                  Donate via Stripe
                </button>
             </div>
+            */}
             
             {!user?.isAnonymous && (
               <button onClick={() => { logout(); navigate('/'); }} className="w-full py-4 text-rose-500 font-bold bg-rose-50 rounded-[2rem] border border-rose-100 mt-4 hover:bg-rose-100 transition-colors">
@@ -415,18 +471,32 @@ export default function AccountPage() {
              </p>
 
              <div className="space-y-4">
-               {profile.pets.length === 0 && !showAddPet ? (
+               {user?.isAnonymous ? (
+                 <div className="text-center py-8 bg-slate-50 border border-slate-200 rounded-3xl">
+                   <div className="w-16 h-16 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
+                     <Lock className="w-8 h-8" />
+                   </div>
+                   <h4 className="font-bold text-slate-800">Pet Profiles Locked</h4>
+                   <p className="text-sm text-slate-500 mb-4 mt-1">Register to manage your furry friend.</p>
+                   <button 
+                     onClick={() => navigate('/login')}
+                     className="py-3 px-6 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-2xl transition-colors shadow-lg shadow-orange-200"
+                   >
+                     Register Now
+                   </button>
+                 </div>
+               ) : profile.pets.length === 0 && !showAddPet ? (
                  <div className="text-center py-8">
                    <div className="w-16 h-16 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
                       <UserIcon className="w-8 h-8" />
                    </div>
                    <h4 className="font-bold text-slate-800">No Pets Registered</h4>
-                   <p className="text-sm text-slate-500 mb-4 mt-1">Keep your furry friends safe.</p>
+                   <p className="text-sm text-slate-500 mb-4 mt-1">Keep your furry friend safe. (Limit: 1 pet per account)</p>
                    <button 
                      onClick={handleShowAddPet}
                      className="py-3 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition-colors shadow-lg"
                    >
-                     Add your pets
+                     Add your pet
                    </button>
                  </div>
                ) : profile.pets.map(pet => (
@@ -591,7 +661,8 @@ export default function AccountPage() {
                  </div>
                )}
                
-               {profile.pets.length > 0 && !showAddPet && (
+               {/* Add another pet hidden for now to maintain 1 slot feature */}
+               {profile.pets.length > 0 && !showAddPet && false && (
                  <button 
                    onClick={handleShowAddPet}
                    className="w-full py-4 border-2 border-dashed border-slate-300 rounded-3xl text-sm font-bold text-slate-500 flex items-center justify-center gap-2 hover:bg-slate-50 hover:text-slate-800 transition-colors"

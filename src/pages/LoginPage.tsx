@@ -1,33 +1,92 @@
 import React, { useState } from 'react';
 import { useLazyAuth } from '../hooks/useLazyAuth';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Mail } from 'lucide-react';
 
 export default function LoginPage() {
-  const { registerWithEmail, loginWithEmail, upgradeToGoogleAccount } = useLazyAuth();
+  const { registerWithEmail, loginWithEmail, upgradeToGoogleAccount, resendVerification, resetPassword } = useLazyAuth();
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [pin, setPin] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [termsAccepted, setTermsAccepted] = useState(false);
-  const [hasOpenedTerms, setHasOpenedTerms] = useState(false);
-  const [hasOpenedPrivacy, setHasOpenedPrivacy] = useState(false);
+  const [needsVerification, setNeedsVerification] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+    setPin(value);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isLogin && (!termsAccepted || !hasOpenedTerms || !hasOpenedPrivacy)) return;
-    if (isLogin) {
-      await loginWithEmail(email, password);
-    } else {
-      await registerWithEmail(email, password, displayName);
+    setAuthError('');
+    if (!isLogin && !termsAccepted) return;
+    
+    try {
+      if (isLogin) {
+        const res = await loginWithEmail(email, pin);
+        if (res?.needsVerification) {
+          setNeedsVerification(true);
+        } else {
+          navigate('/account');
+        }
+      } else {
+        const res = await registerWithEmail(email, pin, displayName);
+        if (res?.needsVerification) {
+          setNeedsVerification(true);
+        } else {
+          navigate('/account');
+        }
+      }
+    } catch (err: any) {
+      if (err.code === 'auth/invalid-credential') setAuthError('Invalid email or PIN.');
+      else if (err.code === 'auth/email-already-in-use') setAuthError('Email already registered.');
+      else setAuthError(err.message || 'An error occurred. Please try again.');
     }
-    navigate('/account');
   };
 
-  const isRegisterFormValid = !!(email && password && displayName && termsAccepted && hasOpenedTerms && hasOpenedPrivacy);
-  const isLoginFormValid = !!(email && password);
+  const isRegisterFormValid = !!(email && pin.length === 6 && displayName && termsAccepted);
+  const isLoginFormValid = !!(email && pin.length === 6);
   const canSubmit = isLogin ? isLoginFormValid : isRegisterFormValid;
+
+  if (needsVerification) {
+    return (
+      <div className="h-full w-full bg-slate-100 flex flex-col items-center justify-center p-6 font-sans">
+        <div className="bg-white p-8 rounded-3xl shadow-sm text-center max-w-sm w-full">
+          <div className="w-16 h-16 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-6">
+            <Mail className="w-8 h-8" />
+          </div>
+          <h2 className="text-2xl font-black text-slate-900 mb-2">Check your email</h2>
+          <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+            We've sent a verification link to <strong>{email}</strong> from noreply@straykin.com. Please click the link to verify your account.
+          </p>
+          <div className="space-y-3">
+             <button 
+               onClick={async () => {
+                 try {
+                   await resendVerification();
+                   alert("Verification email resent!");
+                 } catch (e: any) {
+                   alert("Could not resend: " + e.message);
+                 }
+               }}
+               className="w-full py-4 bg-orange-500 text-white rounded-xl font-bold shadow-md hover:bg-orange-600 transition-colors"
+             >
+               Resend Email
+             </button>
+             <button 
+               onClick={() => navigate('/account')}
+               className="w-full py-4 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors"
+             >
+               Continue to Account
+             </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full w-full bg-slate-100 overflow-y-auto flex flex-col font-sans">
@@ -48,6 +107,11 @@ export default function LoginPage() {
 
       <div className="p-6">
         <form onSubmit={handleSubmit} className="space-y-4 bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200">
+          {authError && (
+            <div className="p-3 bg-red-50 text-red-600 text-xs font-bold rounded-xl border border-red-100">
+              {authError}
+            </div>
+          )}
           {!isLogin && (
             <div>
               <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Display Name</label>
@@ -75,15 +139,40 @@ export default function LoginPage() {
           </div>
           
           <div>
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Password</label>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">6-Digit PIN</label>
             <input 
               type="password" 
-              value={password}
-              onChange={e => setPassword(e.target.value)}
+              value={pin}
+              onChange={handlePinChange}
               required
-              className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-4 py-3 text-sm placeholder-slate-400 mt-1 focus:outline-orange-500 focus:bg-white"
-              placeholder="••••••••"
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-xl px-4 py-3 text-sm placeholder-slate-400 mt-1 focus:outline-orange-500 focus:bg-white tracking-[0.5em] font-mono text-center"
+              placeholder="••••••"
             />
+            {isLogin && (
+              <div className="flex justify-end mt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!email) {
+                      setAuthError('Please enter your email address first to reset your PIN.');
+                      return;
+                    }
+                    try {
+                      await resetPassword(email);
+                      alert('A password reset link has been sent to your email.');
+                    } catch (e: any) {
+                      setAuthError(e.message || 'Could not send reset email.');
+                    }
+                  }}
+                  className="text-[10px] font-bold text-orange-500 hover:text-orange-600 transition-colors"
+                >
+                  Forgot your PIN?
+                </button>
+              </div>
+            )}
           </div>
 
           {!isLogin && (
@@ -95,19 +184,13 @@ export default function LoginPage() {
                   id="terms"
                   checked={termsAccepted}
                   onChange={(e) => setTermsAccepted(e.target.checked)}
-                  disabled={!hasOpenedTerms || !hasOpenedPrivacy}
                   className="mt-1 shrink-0 w-4 h-4 text-orange-500 rounded focus:ring-orange-500 disabled:opacity-50"
-                  title={(!hasOpenedTerms || !hasOpenedPrivacy) ? "Please read the terms and privacy policy first" : ""}
+                  title=""
                 />
                 <label htmlFor="terms" className="text-xs text-slate-500 leading-relaxed font-medium">
-                  I agree to the <a href="/terms" target="_blank" onClick={() => setHasOpenedTerms(true)} className="font-bold text-orange-500 mx-0.5">Terms & Conditions</a> and <a href="/privacy" target="_blank" onClick={() => setHasOpenedPrivacy(true)} className="font-bold text-orange-500 mx-0.5">Privacy Policy</a>
+                  I agree to the <a href="/terms" target="_blank" className="font-bold text-orange-500 mx-0.5">Terms & Conditions</a> and <a href="/privacy" target="_blank" className="font-bold text-orange-500 mx-0.5">Privacy Policy</a>
                 </label>
               </div>
-              {(!hasOpenedTerms || !hasOpenedPrivacy) && (
-                <p className="text-[10px] font-bold text-orange-600 animate-pulse">
-                  Please click the links to read our policies before registering.
-                </p>
-              )}
             </div>
           )}
 
@@ -132,8 +215,12 @@ export default function LoginPage() {
           
           <button
             onClick={async () => {
-              await upgradeToGoogleAccount();
-              navigate('/account');
+              try {
+                await upgradeToGoogleAccount();
+                navigate('/account');
+              } catch (e) {
+                setAuthError('Google sign in failed.');
+              }
             }}
             className="w-full flex items-center justify-center gap-3 bg-white text-slate-700 font-black py-4 rounded-xl hover:bg-slate-50 transition-all active:scale-95 shadow-sm border border-slate-200"
           >
@@ -149,7 +236,10 @@ export default function LoginPage() {
 
         <div className="mt-8 text-center">
           <button 
-            onClick={() => setIsLogin(!isLogin)}
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setAuthError('');
+            }}
             className="text-sm font-bold text-slate-500 hover:text-orange-500 transition-colors"
           >
             {isLogin ? "Don't have an account? Register" : "Already have an account? Sign In"}

@@ -1,0 +1,35 @@
+{
+  "entities": {
+    "CatRecord": {
+      "title": "CatRecord",
+      "description": "Details about a stray cat",
+      "type": "object",
+      "properties": {
+        "geohash": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "name": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["under_review", "approved", "rejected"] },
+        "submissionId": { "type": "string" },
+        "last_check_in": {
+          "type": "object",
+          "properties": {
+            "was_fed": { "type": "boolean" },
+            "status_health": { "type": "string" },
+            "notes": { "type": "string" },
+            "color": { "type": "string" },
+            "strayType": { "type": "string" },
+            "isNeutered": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "/cats/{catId}": {
+      "schema": { "$ref": "#/entities/CatRecord" },
+      "description": "Stray cats logged in the app"
+    }
+  }
+}

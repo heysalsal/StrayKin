@@ -20,6 +20,17 @@ if (token) {
   bot = new TelegramBot(token, { polling: true });
   console.log("Telegram bot initialized for manual review.");
 
+  bot.on('polling_error', (error: any) => {
+    if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
+      console.warn("Telegram polling conflict: Another instance is running.");
+    } else {
+      console.error("Telegram polling error:", error);
+    }
+  });
+
+  process.once('SIGINT', () => bot?.stopPolling());
+  process.once('SIGTERM', () => bot?.stopPolling());
+
   bot.on('callback_query', (query) => {
     if (!query.data || !query.message) return;
     

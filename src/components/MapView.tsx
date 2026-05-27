@@ -9,6 +9,8 @@ import { Plus, AlertCircle, MapPin, List, X, User } from 'lucide-react';
 import { mapConfig } from '../config/map';
 import { CatRecord } from '../types';
 import { CustomIcon } from './CustomIcon';
+import { AdBanner } from './AdBanner';
+import { motion, AnimatePresence } from 'motion/react';
 
 const isRecentlyFed = (cat: CatRecord) => {
   if (!cat.last_check_in?.timestamp) return false;
@@ -93,6 +95,18 @@ export default function MapView() {
   const [currentIdx, setCurrentIdx] = useState(0);
   
   const [duplicates, setDuplicates] = useState<CatRecord[]>([]);
+  
+  const displayItems = React.useMemo(() => {
+    const items: { type: 'cat' | 'ad', data?: CatRecord }[] = [];
+    duplicates.forEach((cat, index) => {
+      items.push({ type: 'cat', data: cat });
+      if ((index + 1) % 3 === 0) {
+        items.push({ type: 'ad' });
+      }
+    });
+    return items;
+  }, [duplicates]);
+
   const [sightingPos, setSightingPos] = useState<[number, number] | null>(null);
   
   // Form State
@@ -266,7 +280,8 @@ export default function MapView() {
           ...details,
           photoDataUrl,
           status: 'under_review',
-          submissionId
+          submissionId,
+          submittedBy: user?.uid
         }, true);
         if (res.status === 'created') {
           setSelectedCatId(res.id);
@@ -281,7 +296,7 @@ export default function MapView() {
       if (selectedCatId) {
         await updateCatSighting(selectedCatId, { ...details, photoDataUrl });
       } else {
-        const res = await logNewSighting(lat, lng, geohash, { ...details, photoDataUrl }, true);
+        const res = await logNewSighting(lat, lng, geohash, { ...details, photoDataUrl, submittedBy: user?.uid }, true);
         if (res.status === 'created') setSelectedCatId(res.id);
       }
       alert('Submitted (offline preview mode).');
@@ -357,18 +372,24 @@ export default function MapView() {
         </div>
       )}
 
-      {/* Guest Login Banner */}
+      {/* Guest Login Banner (Top Left) */}
       {(!user || user.isAnonymous) && !isMenuOpen && (
-        <div className="absolute left-6 right-[6rem] bottom-8 z-10 animate-bounce">
-          <div className="bg-orange-500 border border-orange-400 text-white rounded-2xl p-4 shadow-[0_8px_30px_rgb(249,115,22,0.3)] flex items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 duration-500 min-h-[3.5rem]">
+        <div className="absolute top-4 left-4 z-10 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="bg-orange-500 border border-orange-400 text-white rounded-2xl p-3 shadow-lg flex items-center gap-3">
              <div className="flex-1">
-               <p className="text-[11px] font-black leading-tight text-white mb-0.5">Not registered?</p>
-               <p className="text-[10px] font-medium text-orange-100 leading-tight">Login to save your progress</p>
+               <p className="text-xs font-black leading-tight">Not registered?</p>
              </div>
-             <button onClick={() => navigate('/login')} className="text-xs font-black bg-white text-orange-600 rounded-xl px-4 py-2 hover:bg-orange-50 transition-colors shadow-sm active:scale-95 whitespace-nowrap self-stretch flex items-center">
+             <button onClick={() => navigate('/login')} className="text-[10px] font-black bg-white text-orange-600 rounded-lg px-3 py-1.5 shadow-sm active:scale-95 whitespace-nowrap">
                Log In
              </button>
           </div>
+        </div>
+      )}
+
+      {/* Sponsored Ad Banner (Bottom Left) */}
+      {!isMenuOpen && (
+        <div className="absolute left-6 right-[6rem] bottom-8 z-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <AdBanner className="bg-white/90 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.1)] border-white/50" />
         </div>
       )}
 
@@ -442,6 +463,7 @@ export default function MapView() {
                   audio={false}
                   ref={webcamRef}
                   screenshotFormat="image/jpeg"
+                  videoConstraints={{ facingMode: 'environment' }}
                   className="absolute inset-0 w-full h-full object-cover"
                 />
                 
@@ -479,33 +501,58 @@ export default function MapView() {
                     </button>
                   </div>
                   
-                  {duplicates.length > 0 && currentIdx < duplicates.length ? (
+                  {displayItems.length > 0 && currentIdx < displayItems.length ? (
                     <>
                       <div className="relative w-full aspect-[4/5] bg-slate-100 rounded-3xl overflow-hidden mb-6 shadow-sm border border-slate-200">
-                        {duplicates[currentIdx].imageUrl ? (
-                          <img src={duplicates[currentIdx].imageUrl} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-6xl">🐈</div>
-                        )}
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 pt-16 text-white">
-                          <h3 className="text-2xl font-black">{duplicates[currentIdx].name || `Straykin #${duplicates[currentIdx].id.slice(-4)}`}</h3>
-                          <p className="text-sm font-medium opacity-90 mt-1">Logged {duplicates[currentIdx].last_check_in?.was_fed ? 'as fed' : 'recently'}</p>
-                        </div>
+                        <AnimatePresence mode="wait">
+                          <motion.div
+                            key={currentIdx}
+                            drag="x"
+                            dragConstraints={{ left: 0, right: 0 }}
+                            onDragEnd={(event, info) => {
+                              if (info.offset.x > 50) {
+                                setCurrentIdx(prev => Math.max(prev - 1, 0));
+                              } else if (info.offset.x < -50) {
+                                setCurrentIdx(prev => Math.min(prev + 1, displayItems.length - 1));
+                              }
+                            }}
+                            initial={{ opacity: 0, x: 20 }}
+                            animate={{ opacity: 1, x: 0 }}
+                            exit={{ opacity: 0, x: -20 }}
+                            transition={{ duration: 0.3 }}
+                            className="w-full h-full cursor-grab active:cursor-grabbing"
+                          >
+                            {displayItems[currentIdx].type === 'ad' ? (
+                               <div className="w-full h-full flex flex-col justify-center items-center bg-white p-4">
+                                  <h3 className="text-lg font-black text-slate-800 mb-6">Sponsor</h3>
+                                  <AdBanner format="rectangle" />
+                               </div>
+                            ) : (
+                               <>
+                                {displayItems[currentIdx].data?.imageUrl ? (
+                                  <img src={displayItems[currentIdx].data!.imageUrl} className="w-full h-full object-cover pointer-events-none" />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-6xl pointer-events-none">🐈</div>
+                                )}
+                                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 pt-16 text-white pointer-events-none">
+                                  <h3 className="text-2xl font-black">{displayItems[currentIdx].data?.name || `Straykin #${displayItems[currentIdx].data?.id.slice(-4)}`}</h3>
+                                  <p className="text-sm font-medium opacity-90 mt-1">Logged {displayItems[currentIdx].data?.last_check_in?.was_fed ? 'as fed' : 'recently'}</p>
+                                </div>
+                               </>
+                            )}
+                          </motion.div>
+                        </AnimatePresence>
                       </div>
 
                       <div className="flex gap-3 mb-4">
-                        <button 
-                           onClick={() => setCurrentIdx(prev => prev + 1)}
-                           className="flex-1 py-4 rounded-2xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition-colors"
-                        >
-                           Nope
-                        </button>
-                        <button 
-                           onClick={() => { setIsModalOpen(false); navigate(`/cat/${duplicates[currentIdx].id}`); }}
-                           className="flex-1 py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors"
-                        >
-                           Yep!
-                        </button>
+                        {displayItems[currentIdx].type === 'cat' && (
+                          <button 
+                             onClick={() => { setIsModalOpen(false); navigate(`/cat/${displayItems[currentIdx].data?.id}`); }}
+                             className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors"
+                          >
+                             Yep, this is the one!
+                          </button>
+                        )}
                       </div>
                     </>
                   ) : (
@@ -519,9 +566,9 @@ export default function MapView() {
                   <div className="flex flex-col gap-3 mt-4">
                     <button 
                       onClick={() => { setSelectedCatId(null); setModalStep('form'); }}
-                      className={`w-full py-4 rounded-2xl font-bold transition-colors flex items-center justify-center gap-2 ${duplicates.length > 0 && currentIdx < duplicates.length ? 'border border-slate-200 text-slate-600 hover:bg-slate-50' : 'bg-orange-500 text-white shadow-lg shadow-orange-200 hover:bg-orange-600'}`}
+                      className={`w-full py-4 rounded-2xl font-bold transition-colors flex items-center justify-center gap-2 ${displayItems.length > 0 && currentIdx < displayItems.length ? 'border border-slate-200 text-slate-600 hover:bg-slate-50' : 'bg-orange-500 text-white shadow-lg shadow-orange-200 hover:bg-orange-600'}`}
                     >
-                      <CustomIcon src="/icon-submit.png" FallbackIcon={AlertCircle} className="w-5 h-5" />
+                      <Plus className="w-5 h-5" />
                       Report New Straykin
                     </button>
                   </div>
