@@ -30,7 +30,7 @@ interface UserProfile {
 }
 
 export default function AccountPage() {
-  const { user, loading: authLoading, upgradeToGoogleAccount, logout } = useLazyAuth();
+  const { user, loading: authLoading, upgradeToGoogleAccount, logout, resendVerification } = useLazyAuth();
   const { cats } = useCatDatabase();
   const navigate = useNavigate();
 
@@ -51,6 +51,14 @@ export default function AccountPage() {
   const [newPet, setNewPet] = useState<{ name: string; breed: string; color: string; age: string; gender: 'Male' | 'Female' | 'Unknown'; lastLocation: string; status: 'private' | 'public' | 'lost'; photoDataUrl?: string }>({ name: '', breed: '', color: '', age: '', gender: 'Unknown', lastLocation: '', status: 'private' });
 
   const [isLocating, setIsLocating] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
 
   const [userSettings, setUserSettings] = useState({ displayName: '', isAnonymous: false });
   useEffect(() => {
@@ -195,7 +203,7 @@ export default function AccountPage() {
            </div>
            <div className="flex-1">
              <div className="flex items-center justify-between">
-               <h2 className="text-xl font-black text-slate-900">{user?.isAnonymous ? 'Guest Explorer' : user?.displayName || 'App User'}</h2>
+               <h2 className="text-xl font-black text-slate-900">{user?.isAnonymous ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}` : user?.displayName || 'App User'}</h2>
                {!user?.isAnonymous && (
                  <button onClick={() => setActiveTab('account')} className="p-1.5 text-slate-400 hover:text-slate-600 bg-slate-50 border border-slate-100 rounded-full">
                    <CustomIcon src="/icon-edit.png" FallbackIcon={Edit2} className="w-4 h-4" />
@@ -232,7 +240,7 @@ export default function AccountPage() {
           </button>
           <button onClick={() => setActiveTab('pets')} className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all ${activeTab === 'pets' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-100'}`}>
             <Award className="w-5 h-5 mb-1.5" />
-            <span className="text-[10px] font-bold">My Cats</span>
+            <span className="text-[10px] font-bold">My Pets</span>
           </button>
           <button onClick={() => setActiveTab('account')} className={`flex flex-col items-center justify-center p-3 rounded-2xl transition-all ${activeTab === 'account' ? 'bg-orange-500 text-white shadow-md shadow-orange-200' : 'bg-slate-50 text-slate-600 border border-slate-100 hover:bg-slate-100'}`}>
             <Settings className="w-5 h-5 mb-1.5" />
@@ -336,6 +344,28 @@ export default function AccountPage() {
                  </div>
                ) : (
                  <div className="space-y-4">
+                   {user && !user.isAnonymous && !user.emailVerified && (
+                     <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                       <h4 className="text-red-800 font-bold text-sm mb-1">Email Verification Required</h4>
+                       <p className="text-xs text-red-600 mb-3 block">Please verify your email address to unlock all features. Check your inbox or spam folder.</p>
+                       <button 
+                         onClick={async () => {
+                           if (resendCooldown > 0) return;
+                           try {
+                             await resendVerification();
+                             alert("Verification email resent!");
+                             setResendCooldown(30);
+                           } catch (e: any) {
+                             alert("Failed to resend: " + e.message);
+                           }
+                         }}
+                         disabled={resendCooldown > 0}
+                         className={`px-4 py-2 text-white rounded-lg text-xs font-bold shadow-sm transition-colors ${resendCooldown > 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-red-600 hover:bg-red-700'}`}
+                       >
+                         {resendCooldown > 0 ? `Wait ${resendCooldown}s` : 'Resend Verification Email'}
+                       </button>
+                     </div>
+                   )}
                    <div>
                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Display Name</p>
                      <input 
@@ -392,6 +422,7 @@ export default function AccountPage() {
                    </div>
                    <h4 className="text-slate-800 font-bold mb-1">Achievements Locked</h4>
                    <p className="text-xs text-slate-500 font-medium mb-3">Register to start earning badges for helping straykins.</p>
+                   <button onClick={() => navigate('/login')} className="px-4 py-2 bg-orange-500 text-white font-bold rounded-full text-xs shadow-md">Register Now</button>
                  </div>
                ) : (
                  profile.unlocked_badges.length === 0 ? (

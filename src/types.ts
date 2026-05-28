@@ -5,6 +5,7 @@ export interface CatRecord {
   geohash: string;
   lat: number;
   lng: number;
+  animalType?: string; // e.g. 'Cat', 'Dog', 'Other'
   name?: string; // Currently used, we might deprecate this soon in favor of names array, but keep for backward compat
   names?: Array<{ name: string; votes: number; suggestedBy: string }>;
   genderVotes?: { male: number; female: number; unknown: number };

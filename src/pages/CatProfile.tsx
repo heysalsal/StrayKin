@@ -41,7 +41,7 @@ export default function CatProfile() {
              fed: cat.last_check_in.was_fed,
              health: cat.last_check_in.status_health || 'Healthy',
              notes: cat.last_check_in.notes || '',
-             user: 'Anonymous'
+             user: user?.isAnonymous ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}` : user?.displayName || 'App User'
           });
        }
        for (let i=1; i<=4; i++) {
@@ -172,7 +172,7 @@ export default function CatProfile() {
 
   const executeWithVotePower = async (category: 'names' | 'traits' | 'gallery', itemId: string, actionDesc: string) => {
     if (loading) return 0;
-    if (!user || user.isAnonymous) {
+    if (!user || user.isAnonymous || !user.emailVerified) {
       setShowLoginModal(true);
       return 0;
     }
@@ -244,7 +244,7 @@ export default function CatProfile() {
 
   const handleCheckIn = async () => {
     if (loading) return;
-    if (!user) {
+    if (!user || user.isAnonymous || !user.emailVerified) {
       setShowLoginModal(true);
       return;
     }
@@ -324,6 +324,41 @@ export default function CatProfile() {
 
   return (
     <div className="relative h-full w-full font-sans bg-black flex flex-col overflow-y-auto pb-32">
+      <div className="sticky top-0 inset-x-0 p-4 bg-gradient-to-b from-black/60 to-transparent pt-6 flex justify-between items-start z-[60] w-full mb-[-88px] pointer-events-none">
+          <button 
+            onClick={() => navigate(-1)} 
+            className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors pointer-events-auto"
+          >
+            <ChevronLeft className="w-7 h-7 -ml-0.5" />
+          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => setIsDetailsOpen(true)}
+              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
+            >
+              <Edit2 className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => { setIsGalleryOpen(true); setViewerIndex(null); }}
+              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
+            >
+              <Images className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => setIsShareOpen(true)}
+              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
+            >
+              <Share2 className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => navigate('/account')}
+              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
+            >
+              <User className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+
       {showInterstitial && (
          <div className="absolute inset-0 z-[100] bg-white flex flex-col items-center justify-center p-6 slide-in-from-bottom-full animate-in duration-500">
            <button onClick={() => setShowInterstitial(false)} className="absolute top-6 right-6 w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-bold text-slate-500 hover:bg-slate-200">✕</button>
@@ -376,40 +411,6 @@ export default function CatProfile() {
         ) : (
           <div className="flex w-full h-full items-center justify-center text-8xl bg-orange-100">🐈</div>
         )}
-        <div className="absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/60 to-transparent pt-6 flex justify-between items-start z-30">
-          <button 
-            onClick={() => navigate(-1)} 
-            className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors"
-          >
-            <ChevronLeft className="w-7 h-7 -ml-0.5" />
-          </button>
-          <div className="flex gap-2">
-            <button 
-              onClick={() => setIsDetailsOpen(true)}
-              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
-            >
-              <Edit2 className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => { setIsGalleryOpen(true); setViewerIndex(null); }}
-              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
-            >
-              <Images className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => setIsShareOpen(true)}
-              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
-            >
-              <Share2 className="w-5 h-5" />
-            </button>
-            <button 
-              onClick={() => navigate('/account')}
-              className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
-            >
-              <User className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/70 to-transparent px-6 pb-8 pt-32 text-white">
           <div className="flex flex-col gap-1 mb-2">
             {cat.status === 'under_review' && (
@@ -426,6 +427,7 @@ export default function CatProfile() {
 
           {/* Minimal Tag display directly on image */}
           <div className="flex flex-wrap gap-2 mb-4">
+             <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold shadow-sm backdrop-blur-md border border-indigo-400/50">{cat.animalType || 'Cat'}</span>
              {defaultColors.map(c => (
                <span key={c} className="bg-orange-500 text-white px-3 py-1 rounded-full text-sm font-bold shadow-sm">{c}</span>
              ))}
@@ -756,19 +758,19 @@ export default function CatProfile() {
                         <span className="text-sm font-bold text-slate-300">Add to Gallery</span>
                         <button 
                           onClick={() => {
-                            if (user?.isAnonymous) {
+                            if (!user || user.isAnonymous || !user.emailVerified) {
                                setShowLoginModal(true);
                                return;
                             }
                             setAddToGallery(!addToGallery);
                           }}
-                          className={`w-12 h-6 rounded-full relative transition-colors ${(addToGallery && !user?.isAnonymous) ? 'bg-orange-500' : 'bg-slate-600'} ${user?.isAnonymous ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          className={`w-12 h-6 rounded-full relative transition-colors ${(addToGallery && !user?.isAnonymous && user?.emailVerified) ? 'bg-orange-500' : 'bg-slate-600'} ${(!user || user.isAnonymous || !user.emailVerified) ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
-                          <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${(addToGallery && !user?.isAnonymous) ? 'left-7' : 'left-1'}`}></span>
+                          <span className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${(addToGallery && !user?.isAnonymous && user?.emailVerified) ? 'left-7' : 'left-1'}`}></span>
                         </button>
                       </div>
-                      {user?.isAnonymous && (
-                        <p className="text-[10px] text-slate-500 mt-1">Register to post photos to the community gallery.</p>
+                      {(!user || user.isAnonymous || !user.emailVerified) && (
+                        <p className="text-[10px] text-slate-500 mt-1">Register and verify email to post photos to the community gallery.</p>
                       )}
                     </div>
                  )}
@@ -819,8 +821,8 @@ export default function CatProfile() {
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-black text-white mb-2">Login Required</h2>
-            <p className="text-slate-400 text-sm mb-6">You need to be logged in to use your vote power and check-in kittens.</p>
+            <h2 className="text-xl font-black text-white mb-2">{(!user || user.isAnonymous) ? 'Login Required' : 'Verification Required'}</h2>
+            <p className="text-slate-400 text-sm mb-6">{(!user || user.isAnonymous) ? 'You need to be logged in to use your vote power and check-in kittens.' : 'Please verify your email address to use this feature. Go to Account > Resend Verification.'}</p>
             <div className="flex gap-3">
               <button 
                 onClick={() => setShowLoginModal(false)}
@@ -831,11 +833,15 @@ export default function CatProfile() {
               <button 
                 onClick={async () => {
                   setShowLoginModal(false);
-                  navigate('/account');
+                  if (!user || user.isAnonymous) {
+                     navigate('/login');
+                  } else {
+                     navigate('/account');
+                  }
                 }}
                 className="flex-1 py-3 px-4 rounded-xl bg-orange-500 text-white font-bold text-sm hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
               >
-                Login
+                {(!user || user.isAnonymous) ? 'Login' : 'My Account'}
               </button>
             </div>
           </div>
@@ -950,9 +956,9 @@ export default function CatProfile() {
                      <p className="text-sm font-bold text-white/90">Spotted near me</p>
                    </div>
                    <p className="text-xs font-medium text-white/80">Has been fed by {
-                     userSettings.isAnonymous 
-                      ? (userSettings.displayName ? userSettings.displayName.slice(0, 2) + '*'.repeat(userSettings.displayName.length - 2) : 'Anonymous')
-                      : (userSettings.displayName || 'A Kind Soul')
+                     user?.isAnonymous 
+                      ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
+                      : (userSettings.displayName || user?.displayName || 'A Kind Soul')
                    }</p>
                 </div>
                 

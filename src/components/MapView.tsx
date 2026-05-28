@@ -116,6 +116,7 @@ export default function MapView() {
   const [photoAttempts, setPhotoAttempts] = useState(0);
   const webcamRef = useRef<Webcam>(null);
   const [nameInput, setNameInput] = useState('');
+  const [animalTypeInput, setAnimalTypeInput] = useState<'Cat' | 'Dog' | 'Other'>('Cat');
   const [genderInput, setGenderInput] = useState<'Male' | 'Female' | 'Unknown'>('Unknown');
   const [activities, setActivities] = useState<string[]>([]);
   const [showAdditional, setShowAdditional] = useState(false);
@@ -180,6 +181,7 @@ export default function MapView() {
        setTagInput('');
        setNotes('');
        setNameInput('');
+       setAnimalTypeInput('Cat');
        setGenderInput('Unknown');
        setSelectedCatId(null);
        
@@ -244,6 +246,7 @@ export default function MapView() {
       notes,
     } : {
       name: nameInput,
+      animalType: animalTypeInput,
       gender: genderInput,
       wasFed: activities.includes('Feed'),
       activities,
@@ -260,6 +263,14 @@ export default function MapView() {
     };
 
     try {
+      const submissionId = `sighting_${Date.now()}`;
+      const reqBody = {
+        id: submissionId,
+        type: selectedCatId ? 'check_in' : 'sighting',
+        details,
+        imageBase64: photoDataUrl
+      };
+
       await fetch('/api/submit-for-review', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,18 +278,19 @@ export default function MapView() {
       });
       alert('Sighting submitted and is under review!');
       
-      // Save locally to show in list as under review
+      // Save locally to show in list as under review (don't save huge base64 string to firestore)
       if (selectedCatId) {
         await updateCatSighting(selectedCatId, {
           ...details,
-          photoDataUrl,
+          photoDataUrl: null, // Defer image save to avoid Firestore limits until approved
           status: 'under_review',
-          submissionId
+          submissionId,
+          submittedBy: user?.uid
         });
       } else {
         const res = await logNewSighting(lat, lng, geohash, {
           ...details,
-          photoDataUrl,
+          photoDataUrl: null,
           status: 'under_review',
           submissionId,
           submittedBy: user?.uid
@@ -352,7 +364,10 @@ export default function MapView() {
                   </div>
                   <div className="flex-1 min-w-0 flex flex-col justify-center">
                     <div className="flex items-start justify-between gap-1 mb-0.5">
-                      <h3 className="font-black text-slate-800 text-[13px] leading-tight truncate">{cat.name || `Straykin #${cat.id.slice(-4)}`}</h3>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[8px] font-black uppercase text-indigo-500 tracking-wider mb-0.5">{cat.animalType || 'Cat'}</span>
+                        <h3 className="font-black text-slate-800 text-[13px] leading-tight truncate">{cat.name || `Straykin #${cat.id.slice(-4)}`}</h3>
+                      </div>
                       {cat.status === 'under_review' && <span className="bg-amber-100 text-amber-700 text-[8px] uppercase font-black px-1.5 py-0.5 rounded-full shrink-0 mt-0.5">Review</span>}
                     </div>
                     <p className="text-[10px] text-slate-400 font-bold truncate">
@@ -374,8 +389,8 @@ export default function MapView() {
 
       {/* Guest Login Banner (Top Left) */}
       {(!user || user.isAnonymous) && !isMenuOpen && (
-        <div className="absolute top-4 left-4 z-10 animate-in fade-in slide-in-from-top-4 duration-500">
-          <div className="bg-orange-500 border border-orange-400 text-white rounded-2xl p-3 shadow-lg flex items-center gap-3">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 animate-in fade-in slide-in-from-top-4 duration-500 w-[max-content]">
+          <div className="bg-orange-500 border border-orange-400 text-white rounded-2xl p-3 shadow-lg flex items-center justify-between gap-3">
              <div className="flex-1">
                <p className="text-xs font-black leading-tight">Not registered?</p>
              </div>
@@ -535,6 +550,7 @@ export default function MapView() {
                                   <div className="w-full h-full flex items-center justify-center text-6xl pointer-events-none">🐈</div>
                                 )}
                                 <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-6 pt-16 text-white pointer-events-none">
+                                  <span className="bg-indigo-500/90 text-white px-2 py-0.5 rounded-full text-[10px] font-black shadow-sm mb-1 inline-block uppercase tracking-wider">{displayItems[currentIdx].data?.animalType || 'Cat'}</span>
                                   <h3 className="text-2xl font-black">{displayItems[currentIdx].data?.name || `Straykin #${displayItems[currentIdx].data?.id.slice(-4)}`}</h3>
                                   <p className="text-sm font-medium opacity-90 mt-1">Logged {displayItems[currentIdx].data?.last_check_in?.was_fed ? 'as fed' : 'recently'}</p>
                                 </div>
@@ -595,6 +611,7 @@ export default function MapView() {
                            {cat.imageUrl ? <img src={cat.imageUrl} className="w-full h-full object-cover" /> : <div className="w-full h-full bg-orange-100 flex items-center justify-center text-2xl">🐈</div>}
                          </div>
                          <div className="flex-1 flex flex-col justify-center">
+                           <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider mb-0.5">{cat.animalType || 'Cat'}</span>
                            <h3 className="text-lg font-bold text-slate-800 leading-tight">{cat.name || `Straykin #${cat.id.slice(-4)}`}</h3>
                            <p className="text-xs text-slate-500 font-medium mt-1">
                              Last seen: {new Date((cat.last_check_in?.timestamp as any)?.seconds * 1000).toLocaleDateString() ?? 'Unknown'}
@@ -641,9 +658,24 @@ export default function MapView() {
                       </div>
                    )}
 
-                   {/* Name Input (New Cat Only) */}
+                   {/* Category & Name Input (New Cat Only) */}
                    {!selectedCatId && (
                      <div className="space-y-4">
+                       <div>
+                         <p className="text-sm font-bold text-slate-800 mb-2">Category</p>
+                         <div className="flex gap-2">
+                            {['Cat', 'Dog', 'Other'].map(type => (
+                               <button 
+                                 key={type}
+                                 onClick={(e) => { e.preventDefault(); setAnimalTypeInput(type as any); }}
+                                 className={`flex-1 py-3 rounded-2xl border text-sm font-bold transition-all ${animalTypeInput === type ? 'bg-orange-100 border-orange-500 text-orange-600' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                               >
+                                 {type}
+                               </button>
+                            ))}
+                         </div>
+                       </div>
+
                        <div>
                          <p className="text-sm font-bold text-slate-800 mb-2">Name</p>
                          <input 

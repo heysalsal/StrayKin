@@ -43,7 +43,7 @@ export default function AllCatsList() {
 
       <div className="flex-1 overflow-y-auto px-5 py-6 space-y-4">
         {nearbyCats.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center pt-20">
+          <div className="flex h-full flex-col items-center justify-center text-center pb-32">
             <div className="w-24 h-24 bg-slate-200 rounded-full flex items-center justify-center text-5xl mb-4">😿</div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">No Straykin Nearby</h3>
             <p className="text-sm text-slate-500 font-medium px-8">There are no Straykin within 50 meters of your location.<br/>Be the first to add them!</p>
@@ -63,9 +63,12 @@ export default function AllCatsList() {
               </div>
               <div className="flex-1 flex flex-col justify-center">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
-                    {cat.name || `Straykin #${cat.id.slice(-4)}`}
-                  </h3>
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider mb-0.5">{cat.animalType || 'Cat'}</span>
+                    <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
+                      {cat.name || `Straykin #${cat.id.slice(-4)}`}
+                    </h3>
+                  </div>
                   {cat.status === 'under_review' && (
                     <span className="shrink-0 bg-amber-100 text-amber-700 text-[10px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
                       Under Review

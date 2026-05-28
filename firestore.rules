@@ -21,8 +21,8 @@ service cloud.firestore {
       return resource.data;
     }
 
-    match /cats/{catId} {
-      allow read: if true; // Public access to view cats for now
+    match /strays/{catId} {
+      allow read: if true; // Public access to view strays for now
       allow create: if isSignedIn(); 
       allow update: if isSignedIn();
     }

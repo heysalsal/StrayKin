@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLazyAuth } from '../hooks/useLazyAuth';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle2, Mail } from 'lucide-react';
@@ -13,6 +13,14 @@ export default function LoginPage() {
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  useEffect(() => {
+    if (resendCooldown > 0) {
+      const timer = setTimeout(() => setResendCooldown(resendCooldown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [resendCooldown]);
 
   const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value.replace(/\D/g, '').slice(0, 6);
@@ -28,10 +36,9 @@ export default function LoginPage() {
       if (isLogin) {
         const res = await loginWithEmail(email, pin);
         if (res?.needsVerification) {
-          setNeedsVerification(true);
-        } else {
-          navigate('/account');
+          alert('Welcome back! Please do not forget to verify your email. You can resend the link from your Account page.');
         }
+        navigate('/account');
       } else {
         const res = await registerWithEmail(email, pin, displayName);
         if (res?.needsVerification) {
@@ -43,6 +50,7 @@ export default function LoginPage() {
     } catch (err: any) {
       if (err.code === 'auth/invalid-credential') setAuthError('Invalid email or PIN.');
       else if (err.code === 'auth/email-already-in-use') setAuthError('Email already registered.');
+      else if (err.code === 'auth/operation-not-allowed') setAuthError('Email/Password login is not enabled in Firebase > Authentication > Sign-in method.');
       else setAuthError(err.message || 'An error occurred. Please try again.');
     }
   };
@@ -65,16 +73,19 @@ export default function LoginPage() {
           <div className="space-y-3">
              <button 
                onClick={async () => {
+                 if (resendCooldown > 0) return;
                  try {
                    await resendVerification();
                    alert("Verification email resent!");
+                   setResendCooldown(30);
                  } catch (e: any) {
                    alert("Could not resend: " + e.message);
                  }
                }}
-               className="w-full py-4 bg-orange-500 text-white rounded-xl font-bold shadow-md hover:bg-orange-600 transition-colors"
+               disabled={resendCooldown > 0}
+               className={`w-full py-4 text-white rounded-xl font-bold shadow-md transition-colors ${resendCooldown > 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-orange-500 hover:bg-orange-600'}`}
              >
-               Resend Email
+               {resendCooldown > 0 ? `Wait ${resendCooldown}s` : 'Resend Email'}
              </button>
              <button 
                onClick={() => navigate('/account')}

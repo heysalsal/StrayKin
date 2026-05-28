@@ -1,10 +1,10 @@
 {
-  "projectId": "straykin",
+  "projectId": "straykin-98cc7",
   "appId": "1:558378395317:web:f534462bb5c53ba7f980fc",
-  "apiKey": "AIzaSyBwHoc2ph_0Fttm5xYJ49yIiF8Lze8BbLI",
-  "authDomain": "straykin.firebaseapp.com",
+  "apiKey": "AIzaSyDxC3R-dcwbPaNOfGqON5ulAVguD2WMBQU",
+  "authDomain": "straykin-98cc7.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
-  "storageBucket": "straykin.firebasestorage.app",
+  "storageBucket": "straykin-98cc7.firebasestorage.app",
   "messagingSenderId": "558378395317",
-  "measurementId": ""
+  "measurementId": "G-2H2PLDDV4L"
 }

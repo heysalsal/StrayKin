@@ -8,8 +8,50 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// In-memory store for submissions
-const submissions = new Map<string, { status: 'under_review' | 'approved' | 'rejected', details: any }>();
+const submissions = new Map<string, { status: 'under_review' | 'approved' | 'rejected', details: any, imageBase64?: string }>();
+
+async function uploadToBunny(imageBase64: string): Promise<string | null> {
+  try {
+    const accessKey = process.env.BUNNY_API_KEY || "eea8fffd-53b3-4080-bd99-3ef5d83ff9a13aaa1ec7-053b-4797-a824-e818158032e8";
+    const zoneName = process.env.BUNNY_ZONE_NAME || "straykin"; 
+    let region = process.env.BUNNY_REGION || ""; 
+    let storageDomain = "storage.bunnycdn.com";
+    
+    if (region.includes("storage.bunnycdn.com")) {
+      storageDomain = region;
+    } else if (region) {
+      storageDomain = `${region.endsWith('.') ? region : region + '.'}storage.bunnycdn.com`;
+    }
+    
+    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, 'base64');
+    
+    const fileName = `straykin_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
+    
+    const url = `https://${storageDomain}/${zoneName}/images/${fileName}`;
+    
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "AccessKey": accessKey,
+        "Content-Type": "application/octet-stream"
+      },
+      body: buffer
+    });
+    
+    if (response.ok) {
+      const pullZoneDomain = process.env.BUNNY_PULL_ZONE || `${zoneName}.b-cdn.net`;
+      return `https://${pullZoneDomain}/images/${fileName}`;
+    } else {
+      const respText = await response.text();
+      console.error("Bunny upload failed:", respText);
+      return null;
+    }
+  } catch (error: any) {
+    console.error("Bunny API error:", error);
+    return null;
+  }
+}
 
 // Setup Telegram Bot if token exists
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -31,20 +73,29 @@ if (token) {
   process.once('SIGINT', () => bot?.stopPolling());
   process.once('SIGTERM', () => bot?.stopPolling());
 
-  bot.on('callback_query', (query) => {
+  bot.on('callback_query', async (query) => {
     if (!query.data || !query.message) return;
     
     const firstUnderscore = query.data.indexOf('_');
     const action = query.data.substring(0, firstUnderscore);
     const id = query.data.substring(firstUnderscore + 1);
     if (submissions.has(id)) {
+      const sub = submissions.get(id)!;
       if (action === 'approve') {
-        submissions.get(id)!.status = 'approved';
+        if (sub.imageBase64 && sub.imageBase64.startsWith('data:image')) {
+          bot?.sendMessage(query.message.chat.id, `Uploading image to BunnyCDN...`);
+          const url = await uploadToBunny(sub.imageBase64);
+          if (url) {
+            sub.details = sub.details || {};
+            sub.details.photoDataUrl = url;
+          }
+        }
+        sub.status = 'approved';
         bot?.answerCallbackQuery(query.id, { text: 'Submission Approved' });
         bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id });
         bot?.sendMessage(query.message.chat.id, `✅ Approved submission ${id}`);
       } else if (action === 'reject') {
-        submissions.get(id)!.status = 'rejected';
+        sub.status = 'rejected';
         bot?.answerCallbackQuery(query.id, { text: 'Submission Rejected' });
         bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id });
         bot?.sendMessage(query.message.chat.id, `❌ Rejected submission ${id}`);
@@ -55,11 +106,23 @@ if (token) {
   });
 }
 
+app.post("/api/upload-image", async (req, res) => {
+  const { imageBase64 } = req.body;
+  if (!imageBase64) return res.status(400).json({ error: "No image" });
+
+  const url = await uploadToBunny(imageBase64);
+  if (url) {
+    return res.json({ success: true, url });
+  } else {
+    return res.status(500).json({ error: "Upload failed" });
+  }
+});
+
 app.post("/api/submit-for-review", async (req, res) => {
   const { id, type, details, imageBase64 } = req.body;
   if (!id) return res.status(400).json({ error: "Missing submission ID" });
 
-  submissions.set(id, { status: 'under_review', details });
+  submissions.set(id, { status: 'under_review', details, imageBase64 });
 
   if (bot && chatId) {
     try {
@@ -77,8 +140,12 @@ app.post("/api/submit-for-review", async (req, res) => {
       };
 
       if (imageBase64) {
-        const buffer = Buffer.from(imageBase64.split(',')[1] || imageBase64, 'base64');
-        await bot.sendPhoto(chatId, buffer, { caption: message, ...inlineKeyboard });
+        if (imageBase64.startsWith('http')) {
+          await bot.sendPhoto(chatId, imageBase64, { caption: message, ...inlineKeyboard });
+        } else {
+          const buffer = Buffer.from(imageBase64.split(',')[1] || imageBase64, 'base64');
+          await bot.sendPhoto(chatId, buffer, { caption: message, ...inlineKeyboard });
+        }
       } else {
         await bot.sendMessage(chatId, message, inlineKeyboard);
       }
@@ -102,7 +169,7 @@ app.post("/api/submit-for-review", async (req, res) => {
 app.get("/api/submission-status/:id", (req, res) => {
   const sub = submissions.get(req.params.id);
   if (!sub) return res.status(404).json({ error: "Not found" });
-  res.json({ status: sub.status });
+  res.json({ status: sub.status, details: sub.status === 'approved' ? sub.details : undefined });
 });
 
 

@@ -27,9 +27,9 @@
     }
   },
   "firestore": {
-    "/cats/{catId}": {
+    "/strays/{strayId}": {
       "schema": { "$ref": "#/entities/CatRecord" },
-      "description": "Stray cats logged in the app"
+      "description": "Stray animals logged in the app"
     }
   }
 }

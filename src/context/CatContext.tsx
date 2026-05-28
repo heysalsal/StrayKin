@@ -23,7 +23,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     const fetchCats = async () => {
       try {
         setLoading(true);
-        const q = query(collection(db, 'cats'));
+        const q = query(collection(db, 'strays'));
         const snap = await getDocs(q);
         const data = snap.docs.map(doc => ({
           id: doc.id,
@@ -48,23 +48,40 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     const pollStatuses = async () => {
-      // Find cats that are under review and have a submissionId
+      // Find cats that are under review using the latest state
       setCats(currentCats => {
         const pending = currentCats.filter(c => c.status === 'under_review' && c.submissionId);
+        
         if (pending.length > 0) {
-          pending.forEach(async (cat) => {
-            try {
-              const res = await fetch(`/api/submission-status/${cat.submissionId}`);
-              if (res.ok && active) {
-                const data = await res.json();
-                if (data.status === 'approved' || data.status === 'rejected') {
-                  setCats(prev => prev.map(c => 
-                    c.id === cat.id ? { ...c, status: data.status } : c
-                  ));
+          // Do not do async fetches inside setCats updater.
+          // Instead, kick off the fetches and let them update state when done.
+          setTimeout(() => {
+            pending.forEach(async (cat) => {
+              if (!active) return;
+              try {
+                const res = await fetch(`/api/submission-status/${cat.submissionId}`);
+                if (res.ok && active) {
+                  const data = await res.json();
+                  if (data.status === 'approved' || data.status === 'rejected') {
+                    setCats(prev => prev.map(c => 
+                      c.id === cat.id ? { ...c, status: data.status, ...(data.details?.photoDataUrl ? { imageUrl: data.details.photoDataUrl } : {}) } : c
+                    ));
+                    // Update firestore via updateCatSighting if the local state caught the approval
+                    updateCatSighting(cat.id, { 
+                      status: data.status, 
+                      ...(data.details?.photoDataUrl ? { photoDataUrl: data.details.photoDataUrl } : {})
+                    }).catch(() => {});
+                  }
+                } else if (res.status === 404) {
+                   // Clean up lost submissions
+                   setCats(prev => prev.map(c => 
+                      c.id === cat.id ? { ...c, status: 'rejected' } : c
+                   ));
+                   updateCatSighting(cat.id, { status: 'rejected' }).catch(() => {});
                 }
-              }
-            } catch (e) {}
-          });
+              } catch (e) {}
+            });
+          }, 0);
         }
         return currentCats;
       });
@@ -91,9 +108,10 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const docRef = await addDoc(collection(db, 'cats'), {
+      const newCatData = {
          lat, lng, geohash,
          name: details.name || null,
+         animalType: details.animalType || 'Cat',
          genderVotes: {
            male: details.gender === 'Male' ? 1 : 0,
            female: details.gender === 'Female' ? 1 : 0,
@@ -110,7 +128,11 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
             activities: details.activities || [],
             notes: details.notes || null
          }
-      });
+      };
+      const docRef = await addDoc(collection(db, 'strays'), newCatData);
+      
+      setCats(prev => [...prev, { id: docRef.id, ...newCatData } as any]);
+      
       return { status: 'created', id: docRef.id };
     } catch(e) {
        console.error("Failed to add document", e);
@@ -121,7 +143,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
   const updateCatSighting = async (catId: string, details: any) => {
     try {
       const { doc, updateDoc } = await import('firebase/firestore');
-      const docRef = doc(db, 'cats', catId);
+      const docRef = doc(db, 'strays', catId);
       
       const updateData: any = {
         'last_check_in.timestamp': serverTimestamp(),

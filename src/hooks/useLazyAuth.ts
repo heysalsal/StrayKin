@@ -91,7 +91,6 @@ export function useLazyAuth() {
       setUser(result.user);
       return { user: result.user, needsVerification: true };
     } catch (err) {
-      console.error("Registration failed", err);
       throw err;
     }
   };
@@ -102,14 +101,18 @@ export function useLazyAuth() {
       setUser(result.user);
       return { user: result.user, needsVerification: !result.user.emailVerified };
     } catch (err) {
-      console.error("Login failed", err);
       throw err;
     }
   };
 
   const resendVerification = async () => {
-    if (auth.currentUser && !auth.currentUser.emailVerified) {
-      await sendEmailVerification(auth.currentUser);
+    const currentUser = auth.currentUser || user;
+    if (currentUser && !currentUser.emailVerified) {
+      await sendEmailVerification(currentUser);
+    } else if (!currentUser) {
+      throw new Error("No user is currently signed in. Please log in first to resend.");
+    } else {
+      throw new Error("Email is already verified!");
     }
   };
 
