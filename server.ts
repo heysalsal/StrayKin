@@ -158,8 +158,19 @@ app.post("/api/submit-for-review", async (req, res) => {
   } else {
     // If no telegram bot configured, auto-approve after 5 seconds to allow testing
     console.log(`[Review] Received submission ${id}. No Telegram bot configured. Auto-approving in 5s.`);
-    setTimeout(() => {
-      if (submissions.has(id)) submissions.get(id)!.status = 'approved';
+    setTimeout(async () => {
+      const sub = submissions.get(id);
+      if (sub) {
+        if (sub.imageBase64 && sub.imageBase64.startsWith('data:image')) {
+          console.log(`[Review] Uploading image for auto-approved submission ${id}...`);
+          const url = await uploadToBunny(sub.imageBase64);
+          if (url) {
+            sub.details = sub.details || {};
+            sub.details.photoDataUrl = url;
+          }
+        }
+        sub.status = 'approved';
+      }
     }, 5000);
   }
 

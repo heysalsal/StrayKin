@@ -45,11 +45,13 @@ const createMarkerIcon = (isFedRecently: boolean, status: string | undefined) =>
   });
 };
 
-function MapEvents() {
+function MapEvents({ onMoveEnd }: { onMoveEnd: (center: [number, number]) => void }) {
   const map = useMapEvents({
     moveend: () => {
-      sessionStorage.setItem('map_center', JSON.stringify([map.getCenter().lat, map.getCenter().lng]));
+      const center: [number, number] = [map.getCenter().lat, map.getCenter().lng];
+      sessionStorage.setItem('map_center', JSON.stringify(center));
       sessionStorage.setItem('map_zoom', map.getZoom().toString());
+      onMoveEnd(center);
     }
   });
   return null;
@@ -74,6 +76,16 @@ function RecenterAction({ counter, position }: { counter: number, position: [num
       prevCounter.current = counter;
     }
   }, [counter, position, map]);
+  return null;
+}
+
+function SearchFlyTo({ coords, trigger }: { coords: [number, number] | null, trigger: number }) {
+  const map = useMap();
+  useEffect(() => {
+    if (coords && trigger > 0) {
+      map.flyTo(coords, 18);
+    }
+  }, [coords, trigger, map]);
   return null;
 }
 
@@ -108,8 +120,13 @@ export default function MapView() {
   }, [duplicates]);
 
   const [sightingPos, setSightingPos] = useState<[number, number] | null>(null);
+  const [isSelectingLocation, setIsSelectingLocation] = useState(false);
+  const [mapCenterValue, setMapCenterValue] = useState<[number, number] | null>(null);
   
-  // Form State
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchCoords, setSearchCoords] = useState<[number, number] | null>(null);
+  const [searchTrigger, setSearchTrigger] = useState(0);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [reportStep, setReportStep] = useState<'camera' | 'form'>('camera');
@@ -172,8 +189,14 @@ export default function MapView() {
       }
     }
     
-    if (position) {
-       setSightingPos(position);
+    setIsSelectingLocation(true);
+    setSearchQuery('');
+  };
+
+  const confirmLocationSelection = async () => {
+    const pos = mapCenterValue || position;
+    if (pos) {
+       setSightingPos(pos);
        setActivities([]);
        setPhotoDataUrl(null);
        setShowAdditional(false);
@@ -185,13 +208,31 @@ export default function MapView() {
        setGenderInput('Unknown');
        setSelectedCatId(null);
        
-       const nearby = await fetchNearbyCats(position[0], position[1], 50);
+       const nearby = await fetchNearbyCats(pos[0], pos[1], 50);
        setDuplicates(nearby);
        setCurrentIdx(0);
        setModalStep('scan');
+       setIsSelectingLocation(false);
        setIsModalOpen(true);
     } else {
        alert("Waiting for GPS location...");
+    }
+  };
+
+  const handleSearchLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=1`);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        setSearchCoords([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
+        setSearchTrigger(t => t + 1);
+      } else {
+        alert("Location not found.");
+      }
+    } catch {
+      alert("Error searching location.");
     }
   };
 
@@ -329,7 +370,8 @@ export default function MapView() {
   return (
     <div className="relative h-full w-full font-sans bg-[#e5e7eb]">
       <MapContainer center={initialCenter} zoom={initialZoom} maxZoom={20} zoomControl={false} className="absolute inset-0 z-0">
-        <MapEvents />
+        <MapEvents onMoveEnd={setMapCenterValue} />
+        <SearchFlyTo coords={searchCoords} trigger={searchTrigger} />
         <TileLayer
           attribution={mapConfig.attribution}
           url={mapConfig.tileUrl}
@@ -380,6 +422,45 @@ export default function MapView() {
         ))}
       </MapContainer>
 
+      {/* Selecting Location Overlay */}
+      {isSelectingLocation && (
+        <div className="absolute inset-x-0 inset-y-0 pointer-events-none z-20 flex flex-col justify-between">
+          <div className="p-4 pointer-events-auto">
+             <form onSubmit={handleSearchLocation} className="flex gap-2 w-full max-w-sm mx-auto shadow-[0_8px_30px_rgb(0,0,0,0.15)] rounded-[2rem] bg-white p-2 border border-slate-100">
+               <input 
+                 type="text" 
+                 placeholder="Search area..." 
+                 value={searchQuery}
+                 onChange={e => setSearchQuery(e.target.value)}
+                 className="flex-1 bg-transparent px-4 outline-none text-sm font-medium"
+               />
+               <button type="submit" className="bg-slate-100 p-3 rounded-full text-slate-600 font-bold hover:bg-slate-200 transition-colors shrink-0">
+                  <MapPin className="w-5 h-5" />
+               </button>
+             </form>
+          </div>
+
+          <div className="absolute top-1/2 left-1/2 w-8 h-8 -ml-4 -mt-4 flex items-center justify-center pointer-events-none drop-shadow-xl">
+             <div className="w-4 h-4 bg-orange-500 rounded-full border-[3px] border-white shadow-xl animate-pulse"></div>
+          </div>
+
+          <div className="p-6 pb-12 bg-gradient-to-t from-black/50 overflow-hidden to-transparent pointer-events-auto flex flex-col gap-3">
+            <button 
+              onClick={confirmLocationSelection}
+              className="w-full bg-orange-500 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-orange-600 transition-transform active:scale-95 text-lg"
+            >
+              Confirm Location
+            </button>
+            <button 
+              onClick={() => setIsSelectingLocation(false)}
+              className="w-full bg-white text-slate-800 font-bold py-3 rounded-2xl shadow-lg hover:bg-slate-50 transition-colors text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* No Cats Warning Box */}
       {cats.length === 0 && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-white/90 backdrop-blur-sm px-6 py-3 rounded-full shadow-lg border border-slate-100 flex items-center justify-center pointer-events-none fade-in animate-in duration-500">
@@ -409,62 +490,64 @@ export default function MapView() {
       )}
 
       {/* Expandable FAB Menu */}
-      <div className="absolute bottom-8 right-8 z-10 flex flex-col items-end gap-3 pointer-events-none">
-        {isMenuOpen && (
-          <div className="flex flex-col items-end gap-3 animate-in slide-in-from-bottom-2 fade-in zoom-in duration-200 pointer-events-auto">
+      {!isSelectingLocation && (
+        <div className="absolute bottom-8 right-8 z-10 flex flex-col items-end gap-3 pointer-events-none">
+          {isMenuOpen && (
+            <div className="flex flex-col items-end gap-3 animate-in slide-in-from-bottom-2 fade-in zoom-in duration-200 pointer-events-auto">
+              <button 
+                onClick={() => { setIsMenuOpen(false); navigate('/account'); }}
+                className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              >
+                <span className="font-bold text-sm tracking-wide">Account</span>
+                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+                  <CustomIcon src="/icon-account.png" FallbackIcon={User} className="w-4 h-4" />
+                </div>
+              </button>
+              <button 
+                onClick={() => { setIsMenuOpen(false); navigate('/cats'); }}
+                className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              >
+                <span className="font-bold text-sm tracking-wide">Nearby</span>
+                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+                  <CustomIcon src="/icon-cats.png" FallbackIcon={List} className="w-4 h-4" />
+                </div>
+              </button>
+              <button 
+                onClick={(e) => { 
+                  e.stopPropagation(); 
+                  e.preventDefault(); 
+                  setIsMenuOpen(false); 
+                  setRecenterCounter(c => c + 1); 
+                }}
+                className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              >
+                <span className="font-bold text-sm tracking-wide">Recenter</span>
+                <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+                  <CustomIcon src="/icon-recenter.png" FallbackIcon={MapPin} className="w-4 h-4" />
+                </div>
+              </button>
+              <button 
+                onClick={() => { setIsMenuOpen(false); handleLogSightingClick(); }}
+                className="flex items-center gap-3 bg-orange-500 text-white px-5 py-3.5 rounded-[2rem] shadow-xl shadow-orange-200 border border-transparent hover:bg-orange-600 transition-all active:scale-95 group"
+              >
+                <span className="font-bold text-sm tracking-wide">Find Stray</span>
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:bg-white/30 transition-colors overflow-hidden">
+                  <CustomIcon src="/icon-find.png" FallbackIcon={Plus} className="w-5 h-5 text-white" />
+                </div>
+              </button>
+            </div>
+          )}
+          
+          <div className="pointer-events-auto flex flex-col gap-3">
             <button 
-              onClick={() => { setIsMenuOpen(false); navigate('/account'); }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              onClick={() => setIsMenuOpen(!isMenuOpen)}
+              className={`w-14 h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? 'bg-orange-600 text-white rotate-45' : 'bg-orange-500 text-white'}`}
             >
-              <span className="font-bold text-sm tracking-wide">Account</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
-                <CustomIcon src="/icon-account.png" FallbackIcon={User} className="w-4 h-4" />
-              </div>
-            </button>
-            <button 
-              onClick={() => { setIsMenuOpen(false); navigate('/cats'); }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
-            >
-              <span className="font-bold text-sm tracking-wide">Nearby</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
-                <CustomIcon src="/icon-cats.png" FallbackIcon={List} className="w-4 h-4" />
-              </div>
-            </button>
-            <button 
-              onClick={(e) => { 
-                e.stopPropagation(); 
-                e.preventDefault(); 
-                setIsMenuOpen(false); 
-                setRecenterCounter(c => c + 1); 
-              }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
-            >
-              <span className="font-bold text-sm tracking-wide">Recenter</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
-                <CustomIcon src="/icon-recenter.png" FallbackIcon={MapPin} className="w-4 h-4" />
-              </div>
-            </button>
-            <button 
-              onClick={() => { setIsMenuOpen(false); handleLogSightingClick(); }}
-              className="flex items-center gap-3 bg-orange-500 text-white px-5 py-3.5 rounded-[2rem] shadow-xl shadow-orange-200 border border-transparent hover:bg-orange-600 transition-all active:scale-95 group"
-            >
-              <span className="font-bold text-sm tracking-wide">Find Stray</span>
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:bg-white/30 transition-colors overflow-hidden">
-                <CustomIcon src="/icon-find.png" FallbackIcon={Plus} className="w-5 h-5 text-white" />
-              </div>
+              <CustomIcon src="/icon-menu.png" FallbackIcon={Plus} className="w-6 h-6" />
             </button>
           </div>
-        )}
-        
-        <div className="pointer-events-auto flex flex-col gap-3">
-          <button 
-            onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className={`w-14 h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? 'bg-orange-600 text-white rotate-45' : 'bg-orange-500 text-white'}`}
-          >
-            <CustomIcon src="/icon-menu.png" FallbackIcon={Plus} className="w-6 h-6" />
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Modal */}
       {isModalOpen && (

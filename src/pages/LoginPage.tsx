@@ -38,9 +38,13 @@ export default function LoginPage() {
         if (res?.needsVerification) {
           alert('Welcome back! Please do not forget to verify your email. You can resend the link from your Account page.');
         }
+        sessionStorage.removeItem('map_center');
+        sessionStorage.removeItem('map_zoom');
         navigate('/account');
       } else {
         const res = await registerWithEmail(email, pin, displayName);
+        sessionStorage.removeItem('map_center');
+        sessionStorage.removeItem('map_zoom');
         if (res?.needsVerification) {
           setNeedsVerification(true);
         } else {
@@ -228,6 +232,8 @@ export default function LoginPage() {
             onClick={async () => {
               try {
                 await upgradeToGoogleAccount();
+                sessionStorage.removeItem('map_center');
+                sessionStorage.removeItem('map_zoom');
                 navigate('/account');
               } catch (e) {
                 setAuthError('Google sign in failed.');

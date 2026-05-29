@@ -28,7 +28,7 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
   }, [onComplete]);
 
   return (
-    <div className={`absolute inset-0 z-[100] flex flex-col items-center justify-center pointer-events-none transition-opacity duration-500 pb-8 ${fade ? 'opacity-0' : 'opacity-100'}`}>
+    <div className={`absolute inset-0 z-[100] flex flex-col items-center justify-center pointer-events-none transition-opacity duration-500 pb-8 bg-[#e5e7eb] ${fade ? 'opacity-0' : 'opacity-100'}`}>
       <img 
         src="/logo.png" 
         alt="Straykin Logo" 
