@@ -40,7 +40,7 @@ export default function LoginPage() {
         }
         sessionStorage.removeItem('map_center');
         sessionStorage.removeItem('map_zoom');
-        navigate('/account');
+        navigate('/');
       } else {
         const res = await registerWithEmail(email, pin, displayName);
         sessionStorage.removeItem('map_center');
@@ -48,7 +48,7 @@ export default function LoginPage() {
         if (res?.needsVerification) {
           setNeedsVerification(true);
         } else {
-          navigate('/account');
+          navigate('/');
         }
       }
     } catch (err: any) {
@@ -92,10 +92,10 @@ export default function LoginPage() {
                {resendCooldown > 0 ? `Wait ${resendCooldown}s` : 'Resend Email'}
              </button>
              <button 
-               onClick={() => navigate('/account')}
+               onClick={() => navigate('/')}
                className="w-full py-4 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors"
              >
-               Continue to Account
+               Continue to Map
              </button>
           </div>
         </div>
@@ -234,9 +234,13 @@ export default function LoginPage() {
                 await upgradeToGoogleAccount();
                 sessionStorage.removeItem('map_center');
                 sessionStorage.removeItem('map_zoom');
-                navigate('/account');
-              } catch (e) {
-                setAuthError('Google sign in failed.');
+                navigate('/');
+              } catch (e: any) {
+                if (e?.code === 'auth/unauthorized-domain') {
+                   setAuthError(`Domain ${window.location.hostname} isn't authorized for Google Login. Add it in Firebase Console.`);
+                } else {
+                   setAuthError('Google sign in failed.');
+                }
               }
             }}
             className="w-full flex items-center justify-center gap-3 bg-white text-slate-700 font-black py-4 rounded-xl hover:bg-slate-50 transition-all active:scale-95 shadow-sm border border-slate-200"

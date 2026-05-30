@@ -76,8 +76,11 @@ export function useLazyAuth() {
       const result = await linkWithPopup(auth.currentUser, provider);
       setUser(result.user);
       return result.user;
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to link Google account", err);
+      if (err?.code === 'auth/unauthorized-domain') {
+        alert(`Authentication failed: Unauthorized domain.\n\nPlease add "${window.location.hostname}" to your Firebase Console under Authentication -> Settings -> Authorized domains.`);
+      }
       setError(err instanceof Error ? err : new Error('Google link failed'));
       throw err;
     }

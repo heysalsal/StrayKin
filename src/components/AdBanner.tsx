@@ -8,16 +8,32 @@ interface AdBannerProps {
 export function AdBanner({ className = '', format = 'banner' }: AdBannerProps) {
   const adRef = useRef<HTMLDivElement>(null);
 
-  // In a real Adsterra integration, you would inject the ad script into this container.
-  // Example for Adsterra:
-  // useEffect(() => {
-  //   if (adRef.current && !adRef.current.firstChild) {
-  //     const script = document.createElement('script');
-  //     script.type = 'text/javascript';
-  //     script.src = `//www.highperformanceformat.com/YOUR_ADSTERRA_ID/invoke.js`;
-  //     adRef.current.appendChild(script);
-  //   }
-  // }, []);
+  useEffect(() => {
+    if (adRef.current && adRef.current.children.length === 3 /* Only placeholder elements */) {
+      // Clear placeholder
+      adRef.current.innerHTML = '';
+      
+      const confScript = document.createElement('script');
+      confScript.type = 'text/javascript';
+      confScript.innerHTML = `
+        var atOptions = {
+          'key' : 'd28456b0fe9ac214855f0dc0be8bdef9',
+          'format' : 'iframe',
+          'height' : 90,
+          'width' : 728,
+          'params' : {}
+        };
+      `;
+      adRef.current.appendChild(confScript);
+
+      const invokeScript = document.createElement('script');
+      invokeScript.type = 'text/javascript';
+      invokeScript.async = true;
+      invokeScript.src = "https://www.highperformanceformat.com/d28456b0fe9ac214855f0dc0be8bdef9/invoke.js";
+      adRef.current.appendChild(invokeScript);
+    }
+  }, []);
+
 
   return (
     <div className={`w-full overflow-hidden flex flex-col items-center justify-center bg-slate-50 border border-slate-200/60 rounded-3xl p-4 shadow-sm ${format === 'rectangle' ? 'aspect-square max-w-[300px] mx-auto' : 'min-h-[100px]'} ${className}`}>

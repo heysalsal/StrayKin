@@ -40,7 +40,8 @@ async function uploadToBunny(imageBase64: string): Promise<string | null> {
     });
     
     if (response.ok) {
-      const pullZoneDomain = process.env.BUNNY_PULL_ZONE || `${zoneName}.b-cdn.net`;
+      let pullZoneDomain = process.env.BUNNY_PULL_ZONE || `${zoneName}.b-cdn.net`;
+      pullZoneDomain = pullZoneDomain.replace(/Main$/, '');
       return `https://${pullZoneDomain}/images/${fileName}`;
     } else {
       const respText = await response.text();
@@ -79,29 +80,33 @@ if (token) {
     const firstUnderscore = query.data.indexOf('_');
     const action = query.data.substring(0, firstUnderscore);
     const id = query.data.substring(firstUnderscore + 1);
+    
     if (submissions.has(id)) {
       const sub = submissions.get(id)!;
+      bot?.answerCallbackQuery(query.id, { text: 'Processing...' }).catch(() => {});
+      
       if (action === 'approve') {
         if (sub.imageBase64 && sub.imageBase64.startsWith('data:image')) {
-          bot?.sendMessage(query.message.chat.id, `Uploading image to BunnyCDN...`);
+          bot?.sendMessage(query.message.chat.id, `Uploading image to BunnyCDN...`).catch(() => {});
           const url = await uploadToBunny(sub.imageBase64);
           if (url) {
             sub.details = sub.details || {};
             sub.details.photoDataUrl = url;
+          } else {
+             sub.details = sub.details || {};
+             sub.details.photoDataUrl = sub.imageBase64;
           }
         }
         sub.status = 'approved';
-        bot?.answerCallbackQuery(query.id, { text: 'Submission Approved' });
-        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id });
-        bot?.sendMessage(query.message.chat.id, `✅ Approved submission ${id}`);
+        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id }).catch(() => {});
+        bot?.sendMessage(query.message.chat.id, `✅ Approved submission ${id}`).catch(() => {});
       } else if (action === 'reject') {
         sub.status = 'rejected';
-        bot?.answerCallbackQuery(query.id, { text: 'Submission Rejected' });
-        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id });
-        bot?.sendMessage(query.message.chat.id, `❌ Rejected submission ${id}`);
+        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id }).catch(() => {});
+        bot?.sendMessage(query.message.chat.id, `❌ Rejected submission ${id}`).catch(() => {});
       }
     } else {
-      bot?.answerCallbackQuery(query.id, { text: 'Submission not found or expired', show_alert: true });
+      bot?.answerCallbackQuery(query.id, { text: 'Submission not found or expired', show_alert: true }).catch(() => {});
     }
   });
 }
@@ -167,6 +172,10 @@ app.post("/api/submit-for-review", async (req, res) => {
           if (url) {
             sub.details = sub.details || {};
             sub.details.photoDataUrl = url;
+          } else {
+             console.log(`[Review] BunnyCDN fail, falling back to base64...`);
+             sub.details = sub.details || {};
+             sub.details.photoDataUrl = sub.imageBase64;
           }
         }
         sub.status = 'approved';
@@ -178,6 +187,7 @@ app.post("/api/submit-for-review", async (req, res) => {
 });
 
 app.get("/api/submission-status/:id", (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   const sub = submissions.get(req.params.id);
   if (!sub) return res.status(404).json({ error: "Not found" });
   res.json({ status: sub.status, details: sub.status === 'approved' ? sub.details : undefined });

@@ -10,6 +10,7 @@ interface CatContextProps {
   fetchNearbyCats: (lat: number, lng: number, radius?: number) => Promise<CatRecord[]>;
   logNewSighting: (lat: number, lng: number, geohash: string, details: any, forceCreate?: boolean) => Promise<any>;
   updateCatSighting: (catId: string, details: any) => Promise<any>;
+  updateCatProfile: (catId: string, payload: Partial<CatRecord>) => Promise<any>;
   seedMockArea: (lat: number, lng: number) => void;
 }
 
@@ -69,7 +70,9 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
                     // Update firestore via updateCatSighting if the local state caught the approval
                     updateCatSighting(cat.id, { 
                       status: data.status, 
-                      ...(data.details?.photoDataUrl ? { photoDataUrl: data.details.photoDataUrl } : {})
+                      ...(data.details?.photoDataUrl ? { photoDataUrl: data.details.photoDataUrl } : {}),
+                      ...(data.details?.addToGallery !== undefined ? { addToGallery: data.details.addToGallery } : {}),
+                      submittedBy: data.details?.submittedBy 
                     }).catch(() => {});
                   }
                 } else if (res.status === 404) {
@@ -142,9 +145,12 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
 
   const updateCatSighting = async (catId: string, details: any) => {
     try {
-      const { doc, updateDoc } = await import('firebase/firestore');
+      const { doc, getDoc, updateDoc } = await import('firebase/firestore');
       const docRef = doc(db, 'strays', catId);
-      
+      const catSnap = await getDoc(docRef);
+      if (!catSnap.exists()) return { status: 'not_found' };
+      const catData = catSnap.data();
+
       const updateData: any = {
         'last_check_in.timestamp': serverTimestamp(),
       };
@@ -156,6 +162,22 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
       if (details.wasFed !== undefined) updateData['last_check_in.was_fed'] = details.wasFed;
       if (details.activities) updateData['last_check_in.activities'] = details.activities;
       if (details.notes) updateData['last_check_in.notes'] = details.notes;
+      if (details.inviteCode !== undefined) updateData.inviteCode = details.inviteCode;
+      if (details.caretakers !== undefined) updateData.caretakers = details.caretakers;
+
+      let newGallery = [...(catData.gallery || [])];
+      let galleryUpdated = false;
+      if (details.addToGallery && details.photoDataUrl && details.status === 'approved') {
+         newGallery.push({ id: Date.now().toString(), url: details.photoDataUrl, timestamp: Date.now(), votes: 0, submittedBy: details.submittedBy });
+         // Sort by votes descending, then timestamp descending
+         newGallery.sort((a, b) => b.votes - a.votes || b.timestamp - a.timestamp);
+         // Keep max 10
+         if (newGallery.length > 10) {
+            newGallery = newGallery.slice(0, 10);
+         }
+         updateData.gallery = newGallery;
+         galleryUpdated = true;
+      }
 
       await updateDoc(docRef, updateData);
       
@@ -167,6 +189,9 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
               name: details.name || c.name,
               ...(details.status ? { status: details.status, submissionId: details.submissionId } : {}),
               ...(details.photoDataUrl ? { imageUrl: details.photoDataUrl } : {}),
+              ...(galleryUpdated ? { gallery: newGallery } : {}),
+              ...(details.inviteCode !== undefined ? { inviteCode: details.inviteCode } : {}),
+              ...(details.caretakers !== undefined ? { caretakers: details.caretakers } : {}),
               last_check_in: { 
                  ...c.last_check_in, 
                  timestamp: { seconds: Math.floor(Date.now() / 1000), nanoseconds: 0 },
@@ -184,12 +209,38 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const updateCatProfile = async (catId: string, payload: Partial<CatRecord>) => {
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      const docRef = doc(db, 'strays', catId);
+      
+      const updateData: any = {};
+      if (payload.names) updateData.names = payload.names;
+      if (payload.characteristics) updateData.characteristics = payload.characteristics;
+      if (payload.gallery) updateData.gallery = payload.gallery;
+      if (payload.genderVotes) updateData.genderVotes = payload.genderVotes;
+      if (payload.inviteCode !== undefined) updateData.inviteCode = payload.inviteCode;
+      if (payload.caretakers !== undefined) updateData.caretakers = payload.caretakers;
+
+      await updateDoc(docRef, updateData);
+      
+      setCats(prev => prev.map(c => 
+        c.id === catId ? { ...c, ...payload } : c
+      ));
+      
+      return { status: 'updated' };
+    } catch(e) {
+      console.error("Failed to update cat profile", e);
+      throw e;
+    }
+  };
+
   const seedMockArea = (lat: number, lng: number) => {
     // Mock seeding disabled - using real database now
   };
 
   return (
-    <CatContext.Provider value={{ cats, loading, fetchNearbyCats: findNearbyCats, logNewSighting, updateCatSighting, seedMockArea }}>
+    <CatContext.Provider value={{ cats, loading, fetchNearbyCats: findNearbyCats, logNewSighting, updateCatSighting, updateCatProfile, seedMockArea }}>
       {children}
     </CatContext.Provider>
   );
