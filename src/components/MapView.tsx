@@ -323,18 +323,18 @@ export default function MapView() {
       console.error("Failed to submit:", err);
       // Offline fallback
       if (selectedCatId) {
-        await updateCatSighting(selectedCatId, { ...details, photoDataUrl });
+        await updateCatSighting(selectedCatId, { ...details, photoDataUrl: null });
       } else {
         const res = await logNewSighting(
           lat,
           lng,
           geohash,
-          { ...details, photoDataUrl, submittedBy: user?.uid },
+          { ...details, photoDataUrl: null, submittedBy: user?.uid },
           true,
         );
         if (res.status === "created") setSelectedCatId(res.id);
       }
-      alert("Submitted (offline preview mode).");
+      alert("Submitted (offline preview mode). Image stripped due to offline fallback size limits.");
       setIsModalOpen(false);
       setIsShareOpen(true);
     }

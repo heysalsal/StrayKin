@@ -20,8 +20,16 @@ import {
   ExternalLink,
   MapPin,
 } from "lucide-react";
-import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
+
+function MapController({ center }: { center: [number, number] }) {
+  const map = useMap();
+  React.useEffect(() => {
+    map.flyTo(center, map.getZoom());
+  }, [center, map]);
+  return null;
+}
 
 function LocationPickerEvents({
   onSelect,
@@ -227,40 +235,86 @@ export default function AccountPage() {
     // Here we would also update Firestore
   };
 
-  const toggleLostMode = (petId: string) => {
+  const toggleLostMode = async (petId: string) => {
+    let newStatus = "";
     setProfile((prev) => ({
       ...prev,
       pets: prev.pets.map((p) => {
         if (p.id === petId) {
-          const newStatus = p.status === "lost" ? "private" : "lost";
+          newStatus = p.status === "lost" ? "private" : "lost";
           return { ...p, status: newStatus };
         }
         return p;
       }),
     }));
+    
+    if (newStatus) {
+      try {
+        const { doc, updateDoc } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        const petRef = doc(db, 'pets', petId);
+        await updateDoc(petRef, { status: newStatus });
+      } catch(e) {
+        console.error("Failed to update lost mode on Firebase", e);
+      }
+    }
   };
 
-  const togglePublicMode = (petId: string) => {
+  const togglePublicMode = async (petId: string) => {
+    let newStatus = "";
+    let canChange = false;
     setProfile((prev) => ({
       ...prev,
       pets: prev.pets.map((p) => {
         if (p.id === petId) {
           if (p.status === "lost") return p; // Cannot change public/private if lost
-          const newStatus = p.status === "private" ? "public" : "private";
+          newStatus = p.status === "private" ? "public" : "private";
+          canChange = true;
           return { ...p, status: newStatus };
         }
         return p;
       }),
     }));
+    
+    if (canChange && newStatus) {
+      try {
+        const { doc, updateDoc } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        const petRef = doc(db, 'pets', petId);
+        await updateDoc(petRef, { status: newStatus });
+      } catch(e) {
+        console.error("Failed to update public mode on Firebase", e);
+      }
+    }
   };
 
-  const handleAddPet = () => {
+  const handleAddPet = async () => {
     if (!newPet.name) return;
     const newId = `pet_${Date.now()}`;
+    
+    // Optimistic UI update
     setProfile((prev) => ({
       ...prev,
       pets: [...prev.pets, { ...newPet, id: newId }],
     }));
+    
+    try {
+      const { doc, setDoc } = await import('firebase/firestore');
+      const { db } = await import('../config/firebase');
+      
+      const petData = {
+        ...newPet,
+        id: newId,
+        ownerId: user?.uid || 'anonymous',
+        createdAt: Date.now(),
+      };
+      
+      await setDoc(doc(db, "pets", newId), petData);
+    } catch(err) {
+      console.error("Failed to add pet to Firestore:", err);
+      alert("Failed to save pet permanently. It is only saved locally for now.");
+    }
+    
     setNewPet({
       name: "",
       species: "",
@@ -1331,11 +1385,14 @@ export default function AccountPage() {
                         e.preventDefault();
                         setIsMapPickerOpen(true);
                         navigator.geolocation.getCurrentPosition(
-                          (pos) =>
-                            setDeviceLocation([
+                          (pos) => {
+                            const newPos: [number, number] = [
                               pos.coords.latitude,
                               pos.coords.longitude,
-                            ]),
+                            ];
+                            setDeviceLocation(newPos);
+                            setMapPickerCenter(newPos);
+                          },
                           () => {},
                         );
                       }}
@@ -1407,6 +1464,27 @@ export default function AccountPage() {
                               <MapPin className="w-5 h-5" />
                             </button>
                           </form>
+                          <button
+                            onClick={(e) => {
+                              e.preventDefault();
+                              if ("geolocation" in navigator) {
+                                navigator.geolocation.getCurrentPosition(
+                                  (pos) => {
+                                    const newPos: [number, number] = [
+                                      pos.coords.latitude,
+                                      pos.coords.longitude,
+                                    ];
+                                    setDeviceLocation(newPos);
+                                    setMapPickerCenter(newPos);
+                                  },
+                                  () => alert("Could not get location.")
+                                );
+                              }
+                            }}
+                            className="w-12 h-12 rounded-full bg-white text-indigo-600 shadow-[0_8px_30px_rgb(0,0,0,0.15)] flex items-center justify-center shrink-0 border border-slate-100 hover:bg-indigo-50 transition-colors"
+                          >
+                            <MapPin className="w-5 h-5" />
+                          </button>
                         </div>
                       </div>
                       <div className="flex-1 w-full relative z-0">
@@ -1416,6 +1494,7 @@ export default function AccountPage() {
                           zoomControl={false}
                           className="w-full h-full"
                         >
+                          <MapController center={mapPickerCenter} />
                           <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
                           {deviceLocation && (
                             <Marker

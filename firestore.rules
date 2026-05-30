@@ -23,8 +23,14 @@ service cloud.firestore {
 
     match /strays/{catId} {
       allow read: if true; // Public access to view strays for now
-      allow create: if isSignedIn(); 
-      allow update: if isSignedIn();
+      allow create: if true; // Allow anonymous check ins
+      allow update: if true;
+    }
+
+    match /pets/{petId} {
+      allow read: if true;
+      allow create: if true; 
+      allow update: if true;
     }
   }
 }

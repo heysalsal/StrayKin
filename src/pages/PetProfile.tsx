@@ -35,49 +35,51 @@ export default function PetProfile() {
   );
 
   useEffect(() => {
-    // Look in local storage for profile if we own this pet
-    const p = localStorage.getItem("user_profile");
-    let foundPet = null;
-    let isOwner = false;
+    const fetchPet = async () => {
+      // Look in local storage for profile if we own this pet
+      const p = localStorage.getItem("user_profile");
+      let foundPet = null;
+      let isOwner = false;
 
-    if (p) {
-      const parsed = JSON.parse(p);
-      const userPet = parsed.pets?.find((pt: any) => pt.id === id);
-      if (userPet) {
-        foundPet = { ...userPet, isOwner: true, distanceKm: 0 };
-        isOwner = true;
+      if (p) {
+        const parsed = JSON.parse(p);
+        const userPet = parsed.pets?.find((pt: any) => pt.id === id);
+        if (userPet) {
+          foundPet = { ...userPet, isOwner: true, distanceKm: 0 };
+          isOwner = true;
+        }
       }
-    }
 
-    if (!foundPet) {
-      // Mock other user's public pet finding
-      foundPet = {
-        id,
-        name: "Luna",
-        breed: "Persian",
-        color: "White",
-        age: "2 years",
-        gender: "Female",
-        lastLocation: "-6.2088, 106.8456",
-        photoDataUrl:
-          "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=500&h=500&fit=crop",
-        isOwner: false,
-        status: "public",
-        gallery: [
-          "https://images.unsplash.com/photo-1543852786-1cf6624b9987?w=500&h=500&fit=crop",
-          "https://images.unsplash.com/photo-1573865526739-10659fec78a5?w=500&h=500&fit=crop",
-        ],
-        distanceKm: Math.random() * 3, // Mock distance
-      };
-      if (foundPet.distanceKm > 1) {
-        setIsDistanceFar(true);
+      if (!foundPet) {
+        try {
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          const petRef = doc(db, 'pets', id as string);
+          const petSnap = await getDoc(petRef);
+          
+          if (petSnap.exists()) {
+            foundPet = { ...petSnap.data(), id: petSnap.id, isOwner: false, distanceKm: Math.random() * 3 };
+            if (foundPet.distanceKm > 1) {
+              setIsDistanceFar(true);
+            }
+          }
+        } catch(e) {
+          console.error("Failed to fetch pet from firebase", e);
+        }
       }
-    }
 
-    setPet(foundPet);
-  }, [id]);
+      if (foundPet) {
+        setPet(foundPet);
+      } else {
+        alert("Pet profile not found.");
+        navigate("/");
+      }
+    };
+    
+    fetchPet();
+  }, [id, navigate]);
 
-  const togglePublicStatus = () => {
+  const togglePublicStatus = async () => {
     if (!pet?.isOwner) return;
     const newStatus = pet.status === "public" ? "private" : "public";
     setPet({ ...pet, status: newStatus });
@@ -92,6 +94,15 @@ export default function PetProfile() {
         "user_profile",
         JSON.stringify({ ...parsed, pets: updatedPets }),
       );
+    }
+    
+    try {
+      const { doc, updateDoc } = await import('firebase/firestore');
+      const { db } = await import('../config/firebase');
+      const petRef = doc(db, 'pets', pet.id);
+      await updateDoc(petRef, { status: newStatus });
+    } catch(e) {
+      console.error("Failed to update status on Firebase", e);
     }
   };
 

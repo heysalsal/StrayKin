@@ -94,7 +94,7 @@ if (token) {
             sub.details.photoDataUrl = url;
           } else {
              sub.details = sub.details || {};
-             sub.details.photoDataUrl = sub.imageBase64;
+             sub.details.photoDataUrl = "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
           }
         }
         sub.status = 'approved';
@@ -173,9 +173,9 @@ app.post("/api/submit-for-review", async (req, res) => {
             sub.details = sub.details || {};
             sub.details.photoDataUrl = url;
           } else {
-             console.log(`[Review] BunnyCDN fail, falling back to base64...`);
+             console.log(`[Review] BunnyCDN fail, using placeholder...`);
              sub.details = sub.details || {};
-             sub.details.photoDataUrl = sub.imageBase64;
+             sub.details.photoDataUrl = "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
           }
         }
         sub.status = 'approved';
