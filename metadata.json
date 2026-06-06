@@ -1,6 +1,6 @@
 {
-  "name": "Straykin",
-  "description": "A community-driven PWA for tracking, locating, and caring for stray cats.",
+  "name": "Straykin - No Stray Left Behind",
+  "description": "A community-driven PWA for tracking, locating, and caring for stray animal.",
   "requestFramePermissions": [
     "geolocation",
     "camera"

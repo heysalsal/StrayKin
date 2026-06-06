@@ -12,7 +12,15 @@ import "leaflet/dist/leaflet.css";
 import { useCatDatabase } from "../hooks/useCatDatabase";
 import { useLazyAuth } from "../hooks/useLazyAuth";
 import { geohashForLocation } from "geofire-common";
-import { Plus, AlertCircle, MapPin, List, X, User } from "lucide-react";
+import {
+  Plus,
+  AlertCircle,
+  MapPin,
+  List,
+  X,
+  User,
+  RefreshCcw,
+} from "lucide-react";
 import { mapConfig } from "../config/map";
 import { CatRecord } from "../types";
 import { CustomIcon } from "./CustomIcon";
@@ -55,17 +63,31 @@ const createMarkerIcon = (
   });
 };
 
-function MapEvents() {
+function MapEvents({ updateViewport }: { updateViewport?: (lat: number, lng: number, radiusM: number) => void }) {
   const map = useMapEvents({
     moveend: () => {
-      const center: [number, number] = [
-        map.getCenter().lat,
-        map.getCenter().lng,
-      ];
+      const center = [map.getCenter().lat, map.getCenter().lng] as [number, number];
       sessionStorage.setItem("map_center", JSON.stringify(center));
       sessionStorage.setItem("map_zoom", map.getZoom().toString());
+      
+      if (updateViewport) {
+        const bounds = map.getBounds();
+        const northEast = bounds.getNorthEast();
+        const radiusM = map.distance(map.getCenter(), northEast);
+        updateViewport(center[0], center[1], radiusM);
+      }
     },
   });
+
+  React.useEffect(() => {
+    if (updateViewport) {
+      const bounds = map.getBounds();
+      const northEast = bounds.getNorthEast();
+      const radiusM = map.distance(map.getCenter(), northEast);
+      updateViewport(map.getCenter().lat, map.getCenter().lng, radiusM);
+    }
+  }, [map, updateViewport]);
+
   return null;
 }
 
@@ -99,19 +121,27 @@ function RecenterAction({
 
 import { useNavigate } from "react-router-dom";
 import Webcam from "react-webcam";
+import { InterstitialAd } from "../config/InterstitialAd";
+import { distanceBetween } from "geofire-common";
 
 export default function MapView() {
   const navigate = useNavigate();
   // Initialize from sessionStorage if possible
   const [position, setPosition] = useState<[number, number] | null>(() => {
     const cached = sessionStorage.getItem("strayapp_pos");
-    return cached ? JSON.parse(cached) : [51.505, -0.09];
+    return cached ? JSON.parse(cached) : null;
   });
+
   const [recenterCounter, setRecenterCounter] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [modalStep, setModalStep] = useState<"scan" | "form">("scan");
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    url: string;
+    alias: string;
+    cat?: any;
+  } | null>(null);
   const [currentIdx, setCurrentIdx] = useState(0);
 
   const [duplicates, setDuplicates] = useState<CatRecord[]>([]);
@@ -149,6 +179,8 @@ export default function MapView() {
   const [addToGallery, setAddToGallery] = useState(true);
 
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [shareImgSrc, setShareImgSrc] = useState<string | undefined>();
+  const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
@@ -157,8 +189,88 @@ export default function MapView() {
     updateCatSighting,
     seedMockArea,
     fetchNearbyCats,
+    refreshCats,
+    updateViewport,
   } = useCatDatabase();
-  const { user, upgradeToGoogleAccount } = useLazyAuth();
+  const { user, loading: authLoading, upgradeToGoogleAccount, signInAnonymouslyIfNeeded } = useLazyAuth();
+
+  useEffect(() => {
+    if (isShareOpen) {
+      const src = photoDataUrl || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.imageUrl) || "";
+      if (src && src.startsWith("http")) {
+        fetch(`/api/proxy-image?url=${encodeURIComponent(src)}`)
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => setShareImgSrc(reader.result as string);
+            reader.readAsDataURL(blob);
+          }).catch(() => setShareImgSrc(src));
+      } else {
+        setShareImgSrc(src);
+      }
+    }
+  }, [isShareOpen, photoDataUrl, selectedCatId]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      signInAnonymouslyIfNeeded();
+    }
+  }, [authLoading, user, signInAnonymouslyIfNeeded]);
+
+  // Missing address notification
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      const asked = sessionStorage.getItem("notif_asked");
+      if (!asked) {
+        sessionStorage.setItem("notif_asked", "true");
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!position || cats.length === 0) return;
+
+    // Auto-fix the specific wrongly rejected sighting
+    if (!sessionStorage.getItem("fixed_sighting_v2")) {
+      const brokenCat = cats.find(
+        (c) =>
+          c.submissionId === "sighting_178030403357" ||
+          c.submissionId === "sighting_1780304033576",
+      );
+      if (brokenCat) {
+        updateCatSighting(brokenCat.id, {
+          status: "approved",
+          submissionId: null,
+        }).catch(() => {});
+      }
+      sessionStorage.setItem("fixed_sighting_v2", "true");
+    }
+
+    if (sessionStorage.getItem("notified_missing_address")) return;
+
+    const nearby = cats.filter((cat) => {
+      if (cat.status !== "approved") return false;
+      const distMeters = distanceBetween([cat.lat, cat.lng], position) * 1000;
+      return distMeters <= 50; // Using 50 meters like AllCatsList
+    });
+
+    const missing = nearby.filter((c) => !c.locationName);
+    if (missing.length > 0) {
+      sessionStorage.setItem("notified_missing_address", "true");
+      if (Notification.permission === "granted") {
+        const n = new Notification("Straykin Area Check", {
+          body: `${missing.length} nearby stray(s) missing an address. Tap to help update!`,
+          icon: "/favicon.png",
+        });
+        n.onclick = () => {
+          window.focus();
+          navigate("/cats");
+          n.close();
+        };
+      }
+    }
+  }, [position, cats, navigate]);
 
   const [userSettings, setUserSettings] = useState({
     displayName: "",
@@ -170,12 +282,77 @@ export default function MapView() {
   }, []);
 
   useEffect(() => {
-    if (!sessionStorage.getItem("strayapp_pos")) {
-      const defaultLoc = [51.505, -0.09] as [number, number];
-      setPosition(defaultLoc);
-      seedMockArea(defaultLoc[0], defaultLoc[1]);
-    } else {
-      seedMockArea(position![0], position![1]);
+    const fetchIpLocation = async (): Promise<[number, number]> => {
+      try {
+        const res = await fetch("https://ipapi.co/json/");
+        const data = await res.json();
+        if (data.latitude && data.longitude) {
+          return [data.latitude, data.longitude];
+        }
+      } catch (e) {}
+      return [51.505, -0.09];
+    };
+
+    const locateAndSeed = async () => {
+      const cached = sessionStorage.getItem("strayapp_pos");
+      if (cached) {
+         try {
+           const cachedPos = JSON.parse(cached);
+           setPosition(cachedPos);
+           setRecenterCounter((c) => c + 1);
+           return;
+         } catch(e) {}
+      }
+
+      let shouldAutoLocate = localStorage.getItem("location_granted") === "true";
+      if ("geolocation" in navigator && !shouldAutoLocate) {
+        try {
+          const result = await navigator.permissions.query({ name: "geolocation" });
+          if (result.state === "granted") {
+            shouldAutoLocate = true;
+          }
+        } catch (e) {}
+      }
+
+      if (shouldAutoLocate) {
+        sessionStorage.setItem("geo_asked_on_load", "true");
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const newPos: [number, number] = [
+              pos.coords.latitude,
+              pos.coords.longitude,
+            ];
+            setPosition(newPos);
+            sessionStorage.setItem("strayapp_pos", JSON.stringify(newPos));
+            seedMockArea(newPos[0], newPos[1]);
+            setRecenterCounter((c) => c + 1); // trigger recenter
+          },
+          async () => {
+            const defaultLoc = await fetchIpLocation();
+            if (!sessionStorage.getItem("strayapp_pos")) {
+              setPosition(defaultLoc);
+              seedMockArea(defaultLoc[0], defaultLoc[1]);
+              sessionStorage.setItem("strayapp_pos", JSON.stringify(defaultLoc));
+            } else {
+              seedMockArea(position ? position[0] : defaultLoc[0], position ? position[1] : defaultLoc[1]);
+            }
+          },
+          { timeout: 5000 },
+        );
+      } else {
+        const defaultLoc = await fetchIpLocation();
+        if (!sessionStorage.getItem("strayapp_pos")) {
+          setPosition(defaultLoc);
+          seedMockArea(defaultLoc[0], defaultLoc[1]);
+          sessionStorage.setItem("strayapp_pos", JSON.stringify(defaultLoc));
+        } else {
+          seedMockArea(position ? position[0] : defaultLoc[0], position ? position[1] : defaultLoc[1]);
+        }
+      }
+    };
+
+    if (!position) {
+      locateAndSeed();
     }
   }, []);
 
@@ -241,9 +418,31 @@ export default function MapView() {
       return;
     }
 
+    const [lat, lng] = sightingPos;
+
+    let locationName = "";
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json`,
+      );
+      const data = await res.json();
+      locationName = data.display_name || "";
+    } catch (e) {}
+
+    if (!locationName) {
+      locationName =
+        prompt(
+          "Could not automatically determine the area name. Please enter a location name/address manually:",
+          "Local Street or Landmark",
+        ) || "";
+      if (!locationName.trim()) {
+        alert("A location name is required to submit a sighting.");
+        return;
+      }
+    }
+
     setIsSubmitting(true);
 
-    const [lat, lng] = sightingPos;
     const geohash = geohashForLocation([lat, lng]);
 
     const details = selectedCatId
@@ -254,6 +453,7 @@ export default function MapView() {
           tags,
           notes,
           addToGallery,
+          locationName,
         }
       : {
           name: nameInput,
@@ -263,6 +463,7 @@ export default function MapView() {
           activities,
           tags,
           notes,
+          locationName,
         };
 
     const submissionId = `sighting_${Date.now()}`;
@@ -323,7 +524,10 @@ export default function MapView() {
       console.error("Failed to submit:", err);
       // Offline fallback
       if (selectedCatId) {
-        await updateCatSighting(selectedCatId, { ...details, photoDataUrl: null });
+        await updateCatSighting(selectedCatId, {
+          ...details,
+          photoDataUrl: null,
+        });
       } else {
         const res = await logNewSighting(
           lat,
@@ -334,7 +538,9 @@ export default function MapView() {
         );
         if (res.status === "created") setSelectedCatId(res.id);
       }
-      alert("Submitted (offline preview mode). Image stripped due to offline fallback size limits.");
+      alert(
+        "Submitted (offline preview mode). Image stripped due to offline fallback size limits.",
+      );
       setIsModalOpen(false);
       setIsShareOpen(true);
     }
@@ -344,8 +550,23 @@ export default function MapView() {
 
   if (!position)
     return (
-      <div className="flex h-full items-center justify-center p-4 text-center text-slate-500 font-medium">
-        Loading your location...
+      <div className="flex h-full w-full flex-col justify-center items-center bg-orange-500 absolute inset-0 z-[100]">
+        <div className="w-32 h-32 bg-white rounded-full p-4 mb-8 shadow-2xl flex items-center justify-center animate-bounce">
+          <img
+            src="/logo.png"
+            alt="Straykin"
+            className="w-full h-full object-contain"
+            onError={(e) => {
+               (e.target as HTMLImageElement).outerHTML = '<div class="text-7xl animate-bounce">🐾</div>';
+            }}
+          />
+        </div>
+        <h1 className="text-4xl font-black text-white tracking-widest mb-4 drop-shadow-md">
+          Straykin
+        </h1>
+        <p className="text-white/80 font-bold text-sm uppercase tracking-widest animate-pulse max-w-[250px] text-center">
+          Gathering the strays in your area...
+        </p>
       </div>
     );
 
@@ -365,7 +586,7 @@ export default function MapView() {
         zoomControl={false}
         className="absolute inset-0 z-0"
       >
-        <MapEvents />
+        <MapEvents updateViewport={updateViewport} />
         <TileLayer
           attribution={mapConfig.attribution}
           url={mapConfig.tileUrl}
@@ -404,7 +625,13 @@ export default function MapView() {
                   style={{ margin: "-4px" }}
                 >
                   <div
-                    onClick={() => navigate(`/cat/${cat.id}`)}
+                    onClick={() =>
+                      setPendingNavigation({
+                        url: `/cat/${cat.id}`,
+                        alias: cat.name || cat.animalType || "Pet",
+                        cat: cat
+                      })
+                    }
                     className="w-[4.5rem] h-[4.5rem] rounded-xl overflow-hidden shadow-sm shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
                   >
                     {cat.imageUrl ? (
@@ -472,11 +699,12 @@ export default function MapView() {
       )}
 
       {/* Sponsored Ad Banner (Bottom Left) */}
-      {!isMenuOpen && (
-        <div className="absolute left-6 right-[6rem] bottom-8 z-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <AdBanner className="bg-white/90 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.1)] border-white/50" />
-        </div>
-      )}
+      <div className="absolute left-6 right-[6rem] bottom-8 z-10 animate-in fade-in slide-in-from-bottom-4 duration-500 mb-0 w-[320px] h-[50px]">
+        <AdBanner
+          format="homeBanner"
+          className="bg-white/90 backdrop-blur-md shadow-[0_8px_30px_rgb(0,0,0,0.1)] border-white/50"
+        />
+      </div>
 
       {/* Expandable FAB Menu */}
       <div className="absolute bottom-8 right-8 z-10 flex flex-col items-end gap-3 pointer-events-none">
@@ -531,6 +759,7 @@ export default function MapView() {
                         "strayapp_pos",
                         JSON.stringify(newPos),
                       );
+                      localStorage.setItem("location_granted", "true");
                       setRecenterCounter((c) => c + 1);
                     },
                     (err) => {
@@ -552,6 +781,20 @@ export default function MapView() {
                   FallbackIcon={MapPin}
                   className="w-4 h-4"
                 />
+              </div>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setIsMenuOpen(false);
+                refreshCats();
+              }}
+              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+            >
+              <span className="font-bold text-sm tracking-wide">Refresh</span>
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+                <RefreshCcw className="w-4 h-4" />
               </div>
             </button>
             <button
@@ -578,12 +821,12 @@ export default function MapView() {
         <div className="pointer-events-auto flex flex-col gap-3">
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className={`w-14 h-14 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? "bg-orange-600 text-white rotate-45" : "bg-orange-500 text-white"}`}
+            className={`w-[80px] h-[80px] mx-0 pt-0 mt-0 mb-[60px] rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? "bg-orange-600 text-white rotate-45" : "bg-orange-500 text-white"}`}
           >
             <CustomIcon
               src="/icon-menu.png"
               FallbackIcon={Plus}
-              className="w-6 h-6"
+              className="w-[40px] h-[40px]"
             />
           </button>
         </div>
@@ -740,9 +983,14 @@ export default function MapView() {
                           <button
                             onClick={() => {
                               setIsModalOpen(false);
-                              navigate(
-                                `/cat/${displayItems[currentIdx].data?.id}`,
-                              );
+                              setPendingNavigation({
+                                url: `/cat/${displayItems[currentIdx].data?.id}`,
+                                alias:
+                                  displayItems[currentIdx].data?.name ||
+                                  displayItems[currentIdx].data?.animalType ||
+                                  "Pet",
+                                cat: displayItems[currentIdx].data
+                              });
                             }}
                             className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors"
                           >
@@ -1071,61 +1319,73 @@ export default function MapView() {
           <div className="w-full max-w-sm flex justify-between items-center mb-6">
             <h2 className="text-xl font-black">Share Sighting</h2>
             <button
-              onClick={() => setIsShareOpen(false)}
+              onClick={() => {
+                setIsShareOpen(false);
+                setShareFinalImage(null);
+              }}
               className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center font-bold"
             >
               ✕
             </button>
           </div>
 
+          {shareFinalImage ? (
+            <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95">
+              <img src={shareFinalImage} className="w-full rounded-[2.5rem] shadow-2xl mb-6" />
+              <p className="text-white text-sm font-bold bg-white/20 px-4 py-2 rounded-full animate-pulse">
+                Long press the image to save or share
+              </p>
+            </div>
+          ) : (
+            <>
           <div
             id="share-card"
-            className="w-full max-w-sm aspect-[9/16] bg-slate-900 rounded-[2.5rem] overflow-hidden relative shadow-2xl border border-slate-800 flex flex-col"
+            className="w-full max-w-sm aspect-[9/16] bg-slate-100 rounded-[2.5rem] overflow-hidden relative shadow-2xl flex flex-col"
           >
-            <img
-              src={
-                photoDataUrl ||
-                (selectedCatId &&
-                  cats.find((c) => c.id === selectedCatId)?.imageUrl) ||
-                ""
-              }
-              className="w-full h-3/5 object-cover"
-            />
-            <div className="flex-1 bg-gradient-to-b from-orange-500 to-orange-600 p-6 flex flex-col justify-between">
-              <div>
-                <h3 className="text-4xl font-black text-white leading-none mb-2">
-                  {nameInput ||
-                    (selectedCatId
-                      ? cats.find((c) => c.id === selectedCatId)?.name
-                      : "Straykin")}
-                </h3>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
-                  <p className="text-sm font-bold text-white/90">
-                    Spotted near me
-                  </p>
-                </div>
-                <p className="text-xs font-medium text-white/80">
-                  Has been fed by{" "}
-                  {userSettings.isAnonymous
-                    ? userSettings.displayName
-                      ? userSettings.displayName.slice(0, 2) +
-                        "*".repeat(userSettings.displayName.length - 2)
-                      : "Anonymous"
-                    : userSettings.displayName || "A Kind Soul"}
-                </p>
-              </div>
-
-              <div className="flex justify-between items-end">
-                <div className="bg-white text-orange-600 px-6 py-3 rounded-full text-sm font-black shadow-lg flex items-center gap-2">
-                  <img src="/logo.png" className="w-4 h-4 object-contain" />
-                  <span>Straykin App</span>
-                </div>
-                <div className="w-16 h-16 bg-white p-1 rounded-xl shadow-lg">
-                  <div className="w-full h-full border-2 border-dashed border-slate-300 flex items-center justify-center text-[10px] text-slate-400 font-bold text-center flex-col leading-tight">
-                    <span>QR</span>
-                    <span>Code</span>
+            <div className="w-full h-full absolute inset-0">
+              <img
+                src={shareImgSrc || ""}
+                className="w-full h-[65%] object-cover"
+                crossOrigin={shareImgSrc?.startsWith("http") ? "anonymous" : undefined}
+              />
+            </div>
+            <div className="w-full h-[45%] absolute bottom-0 left-0">
+              <img src="/card.png" className="w-full h-full object-fill absolute inset-0 z-10" crossOrigin="anonymous" />
+              <div className="relative z-20 w-full h-full p-8 pt-16 flex flex-col justify-between">
+                <div className="flex justify-between items-start gap-2 pb-[6px] mb-[6px] mt-[9px]">
+                  <div className="flex-1 pr-2">
+                    <h3 className="text-4xl font-black text-white leading-none break-words mb-0 pb-0">
+                      {nameInput ||
+                        (selectedCatId
+                          ? cats.find((c) => c.id === selectedCatId)?.name
+                          : "Straykin")}
+                    </h3>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>
+                      <p className="text-sm font-bold text-white/90">
+                        Spotted near me
+                      </p>
+                    </div>
+                    <p className="text-sm font-medium text-white/90">
+                      Has been fed by{" "}
+                      {userSettings.isAnonymous
+                        ? userSettings.displayName
+                          ? userSettings.displayName.slice(0, 2) +
+                            "*".repeat(userSettings.displayName.length - 2)
+                          : "Anonymous"
+                        : userSettings.displayName || "A Kind Soul"}
+                    </p>
                   </div>
+                  <div className="w-16 h-16 bg-white rounded-xl shadow-lg shrink-0 overflow-hidden">
+                    <img
+                      src={`/api/proxy-image?url=${encodeURIComponent(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.origin)}`)}`}
+                      alt="QR Code"
+                      className="w-full h-full object-contain p-1"
+                      crossOrigin="anonymous"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-start items-end -mt-4">
                 </div>
               </div>
             </div>
@@ -1139,7 +1399,12 @@ export default function MapView() {
                   const { toPng } = await import("html-to-image");
                   const download = (await import("downloadjs")).default;
                   try {
-                    const dataUrl = await toPng(node, { quality: 0.95 });
+                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+                    const dataUrl = await toPng(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
+                    if (isIOS) {
+                      setShareFinalImage(dataUrl);
+                      return;
+                    }
                     download(dataUrl, "straykin-sighting.png");
                   } catch (err) {
                     alert("Could not generate image");
@@ -1152,16 +1417,41 @@ export default function MapView() {
             </button>
             <button
               onClick={async () => {
-                if (navigator.share) {
+                const node = document.getElementById("share-card");
+                if (node) {
                   try {
-                    await navigator.share({
-                      title: `Spotted ${nameInput || (selectedCatId ? cats.find((c) => c.id === selectedCatId)?.name : "a Straykin")}!`,
-                      text: `Check out this Straykin on the map!`,
-                      url: window.location.href,
-                    });
-                  } catch (e) {}
-                } else {
-                  alert("Sharing not supported on this browser.");
+                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+                    if (isIOS) {
+                      const { toPng } = await import("html-to-image");
+                      const dataUrl = await toPng(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
+                      setShareFinalImage(dataUrl);
+                      return;
+                    }
+
+                    if (navigator.share) {
+                      const { toBlob } = await import("html-to-image");
+                      const blob = await toBlob(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
+                      if (!blob) return;
+                      const file = new File([blob], "straykin.jpg", { type: blob.type });
+
+                      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                        await navigator.share({
+                          title: `Spotted ${nameInput || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.name) || "a Straykin"}!`,
+                          text: `Check out this Straykin on the map!`,
+                          files: [file],
+                        });
+                        setIsShareOpen(false);
+                      } else {
+                        await navigator.share({
+                          title: `Spotted ${nameInput || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.name) || "a Straykin"}!`,
+                          text: `Check out this Straykin on the map!`,
+                          url: window.location.href,
+                        });
+                      }
+                    }
+                  } catch (err) {
+                    // Ignore share cancel
+                  }
                 }
               }}
               className="flex-1 py-4 bg-orange-500 text-white rounded-2xl font-black"
@@ -1169,7 +1459,21 @@ export default function MapView() {
               Share to App
             </button>
           </div>
+          </>
+        )}
         </div>
+      )}
+
+      {pendingNavigation && (
+        <InterstitialAd
+          isOpen={true}
+          targetAlias={pendingNavigation.alias}
+          onComplete={() => {
+            navigate(pendingNavigation.url, { state: { cat: pendingNavigation.cat, pet: pendingNavigation.cat } });
+            setPendingNavigation(null);
+          }}
+          onCancel={() => setPendingNavigation(null)}
+        />
       )}
     </div>
   );

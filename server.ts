@@ -1,48 +1,80 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import TelegramBot from 'node-telegram-bot-api';
+import TelegramBot from "node-telegram-bot-api";
 
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
 
-const submissions = new Map<string, { status: 'under_review' | 'approved' | 'rejected', details: any, imageBase64?: string }>();
+import fs from "fs";
+
+const SUBMISSIONS_FILE = path.join(process.cwd(), "submissions.json");
+
+const submissions = new Map<
+  string,
+  {
+    status: "under_review" | "approved" | "rejected";
+    details: any;
+    imageBase64?: string;
+    createdAt?: number;
+  }
+>();
+
+try {
+  if (fs.existsSync(SUBMISSIONS_FILE)) {
+    const data = JSON.parse(fs.readFileSync(SUBMISSIONS_FILE, "utf-8"));
+    for (const [k, v] of Object.entries(data)) {
+      submissions.set(k, v as any);
+    }
+  }
+} catch (e) {
+  console.error("Failed to load submissions from disk", e);
+}
+
+function saveSubmissions() {
+  try {
+    const obj = Object.fromEntries(submissions);
+    fs.writeFileSync(SUBMISSIONS_FILE, JSON.stringify(obj));
+  } catch (e) {
+    console.error("Failed to save submissions to disk", e);
+  }
+}
 
 async function uploadToBunny(imageBase64: string): Promise<string | null> {
   try {
-    const accessKey = process.env.BUNNY_API_KEY || "eea8fffd-53b3-4080-bd99-3ef5d83ff9a13aaa1ec7-053b-4797-a824-e818158032e8";
-    const zoneName = process.env.BUNNY_ZONE_NAME || "straykin"; 
-    let region = process.env.BUNNY_REGION || ""; 
+    const accessKey =
+      process.env.BUNNY_API_KEY ||
+      "eea8fffd-53b3-4080-bd99-3ef5d83ff9a13aaa1ec7-053b-4797-a824-e818158032e8";
+    const zoneName = process.env.BUNNY_ZONE_NAME || "straykin";
+    let region = process.env.BUNNY_REGION || "";
     let storageDomain = "storage.bunnycdn.com";
-    
+
     if (region.includes("storage.bunnycdn.com")) {
       storageDomain = region;
     } else if (region) {
-      storageDomain = `${region.endsWith('.') ? region : region + '.'}storage.bunnycdn.com`;
+      storageDomain = `${region.endsWith(".") ? region : region + "."}storage.bunnycdn.com`;
     }
-    
+
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const buffer = Buffer.from(base64Data, 'base64');
-    
+    const buffer = Buffer.from(base64Data, "base64");
+
     const fileName = `straykin_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
-    
+
     const url = `https://${storageDomain}/${zoneName}/images/${fileName}`;
-    
+
     const response = await fetch(url, {
       method: "PUT",
       headers: {
-        "AccessKey": accessKey,
-        "Content-Type": "application/octet-stream"
+        AccessKey: accessKey,
+        "Content-Type": "application/octet-stream",
       },
-      body: buffer
+      body: buffer,
     });
-    
+
     if (response.ok) {
-      let pullZoneDomain = process.env.BUNNY_PULL_ZONE || `${zoneName}.b-cdn.net`;
-      pullZoneDomain = pullZoneDomain.replace(/Main$/, '');
-      return `https://${pullZoneDomain}/images/${fileName}`;
+      return `https://straykin.b-cdn.net/images/${fileName}`;
     } else {
       const respText = await response.text();
       console.error("Bunny upload failed:", respText);
@@ -63,50 +95,136 @@ if (token) {
   bot = new TelegramBot(token, { polling: true });
   console.log("Telegram bot initialized for manual review.");
 
-  bot.on('polling_error', (error: any) => {
-    if (error.code === 'ETELEGRAM' && error.message.includes('409 Conflict')) {
+  bot.on("polling_error", (error: any) => {
+    if (error.code === "ETELEGRAM" && error.message.includes("409 Conflict")) {
       console.warn("Telegram polling conflict: Another instance is running.");
+    } else if (error.code === "EFATAL" || (error.message && error.message.includes("ECONNRESET"))) {
+      // Ignore connection resets, the bot will auto-reconnect
+      console.warn("Telegram polling soft error (ECONNRESET). Auto-reconnecting...");
     } else {
       console.error("Telegram polling error:", error);
     }
   });
 
-  process.once('SIGINT', () => bot?.stopPolling());
-  process.once('SIGTERM', () => bot?.stopPolling());
+  process.once("SIGINT", () => bot?.stopPolling());
+  process.once("SIGTERM", () => bot?.stopPolling());
 
-  bot.on('callback_query', async (query) => {
+  bot.on("callback_query", async (query) => {
     if (!query.data || !query.message) return;
-    
-    const firstUnderscore = query.data.indexOf('_');
-    const action = query.data.substring(0, firstUnderscore);
-    const id = query.data.substring(firstUnderscore + 1);
-    
-    if (submissions.has(id)) {
-      const sub = submissions.get(id)!;
-      bot?.answerCallbackQuery(query.id, { text: 'Processing...' }).catch(() => {});
-      
-      if (action === 'approve') {
-        if (sub.imageBase64 && sub.imageBase64.startsWith('data:image')) {
-          bot?.sendMessage(query.message.chat.id, `Uploading image to BunnyCDN...`).catch(() => {});
-          const url = await uploadToBunny(sub.imageBase64);
-          if (url) {
-            sub.details = sub.details || {};
-            sub.details.photoDataUrl = url;
-          } else {
-             sub.details = sub.details || {};
-             sub.details.photoDataUrl = "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
-          }
-        }
-        sub.status = 'approved';
-        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id }).catch(() => {});
-        bot?.sendMessage(query.message.chat.id, `✅ Approved submission ${id}`).catch(() => {});
-      } else if (action === 'reject') {
-        sub.status = 'rejected';
-        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: query.message.chat.id, message_id: query.message.message_id }).catch(() => {});
-        bot?.sendMessage(query.message.chat.id, `❌ Rejected submission ${id}`).catch(() => {});
-      }
+
+    let action = "";
+    let id = "";
+    const firstColon = query.data.indexOf(":");
+    if (firstColon !== -1) {
+      action = query.data.substring(0, firstColon);
+      id = query.data.substring(firstColon + 1);
     } else {
-      bot?.answerCallbackQuery(query.id, { text: 'Submission not found or expired', show_alert: true }).catch(() => {});
+      const firstUnderscore = query.data.indexOf("_");
+      if (firstUnderscore !== -1) {
+        action = query.data.substring(0, firstUnderscore);
+        id = query.data.substring(firstUnderscore + 1);
+      } else {
+        return;
+      }
+    }
+
+    const sub = submissions.get(id);
+
+    if (!sub) {
+      bot
+        ?.answerCallbackQuery(query.id, {
+          text: "Submission processed previously or expired.",
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    const now = Date.now();
+    if (sub.createdAt && now - sub.createdAt > 24 * 60 * 60 * 1000) {
+      bot
+        ?.answerCallbackQuery(query.id, {
+          text: "This approval request has expired.",
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    if (sub.status !== "under_review") {
+      bot
+        ?.answerCallbackQuery(query.id, {
+          text: `Submission already processed (${sub.status}).`,
+          show_alert: true,
+        })
+        .catch(() => {});
+      return;
+    }
+
+    // 1. Immediate Acknowledgment
+    bot?.answerCallbackQuery(query.id).catch(() => {});
+
+    if (action === "approve") {
+      if (sub.imageBase64 && sub.imageBase64.startsWith("data:image")) {
+        const url = await uploadToBunny(sub.imageBase64);
+        if (url) {
+          sub.details = sub.details || {};
+          sub.details.photoDataUrl = url;
+          delete sub.imageBase64;
+        } else {
+          sub.details = sub.details || {};
+          sub.details.photoDataUrl =
+            "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
+          delete sub.imageBase64;
+        }
+      }
+      sub.status = "approved";
+      saveSubmissions();
+
+      const newText =
+        (query.message.text || query.message.caption || "Submission") +
+        "\n\n✅ Approved by Admin";
+      if (query.message.photo) {
+        bot
+          ?.editMessageCaption(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+      } else {
+        bot
+          ?.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+      }
+    } else if (action === "reject") {
+      sub.status = "rejected";
+      saveSubmissions();
+
+      const newText =
+        (query.message.text || query.message.caption || "Submission") +
+        "\n\n❌ Rejected by Admin";
+      if (query.message.photo) {
+        bot
+          ?.editMessageCaption(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+      } else {
+        bot
+          ?.editMessageText(newText, {
+            chat_id: query.message.chat.id,
+            message_id: query.message.message_id,
+            reply_markup: { inline_keyboard: [] },
+          })
+          .catch(() => {});
+      }
     }
   });
 }
@@ -123,33 +241,64 @@ app.post("/api/upload-image", async (req, res) => {
   }
 });
 
+app.get("/api/proxy-image", async (req, res) => {
+  const imageUrl = req.query.url as string;
+  if (!imageUrl) return res.status(400).send("No url provided");
+  try {
+    const response = await fetch(imageUrl);
+    if (!response.ok) return res.status(response.status).send("Failed to fetch image");
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    res.setHeader("Content-Type", response.headers.get("content-type") || "image/jpeg");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.send(buffer);
+  } catch (error) {
+    res.status(500).send("Error proxying image");
+  }
+});
+
 app.post("/api/submit-for-review", async (req, res) => {
   const { id, type, details, imageBase64 } = req.body;
   if (!id) return res.status(400).json({ error: "Missing submission ID" });
 
-  submissions.set(id, { status: 'under_review', details, imageBase64 });
+  submissions.set(id, {
+    status: "under_review",
+    details,
+    imageBase64,
+    createdAt: Date.now(),
+  });
+  saveSubmissions();
 
   if (bot && chatId) {
     try {
-      const message = `New ${type === 'check_in' ? 'Check-in' : 'Straykin'} Submission! 🐱\nID: ${id}\nDetails: ${JSON.stringify(details, null, 2)}`;
-      
+      const message = `New ${type === "check_in" ? "Check-in" : "Straykin"} Submission! 🐱\nID: ${id}\nDetails: ${JSON.stringify(details, null, 2)}`;
+
       const inlineKeyboard = {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: '✅ Approve', callback_data: `approve_${id}` },
-              { text: '❌ Reject', callback_data: `reject_${id}` }
-            ]
-          ]
-        }
+              { text: "✅ Approve", callback_data: `approve:${id}` },
+              { text: "❌ Reject", callback_data: `reject:${id}` },
+            ],
+          ],
+        },
       };
 
       if (imageBase64) {
-        if (imageBase64.startsWith('http')) {
-          await bot.sendPhoto(chatId, imageBase64, { caption: message, ...inlineKeyboard });
+        if (imageBase64.startsWith("http")) {
+          await bot.sendPhoto(chatId, imageBase64, {
+            caption: message,
+            ...inlineKeyboard,
+          });
         } else {
-          const buffer = Buffer.from(imageBase64.split(',')[1] || imageBase64, 'base64');
-          await bot.sendPhoto(chatId, buffer, { caption: message, ...inlineKeyboard });
+          const buffer = Buffer.from(
+            imageBase64.split(",")[1] || imageBase64,
+            "base64",
+          );
+          await bot.sendPhoto(chatId, buffer, {
+            caption: message,
+            ...inlineKeyboard,
+          });
         }
       } else {
         await bot.sendMessage(chatId, message, inlineKeyboard);
@@ -157,42 +306,57 @@ app.post("/api/submit-for-review", async (req, res) => {
     } catch (e: any) {
       console.error("Failed to send telegram message:", e.message || e);
       if (e?.response?.statusCode === 403) {
-         console.error("Hint: Make sure the TELEGRAM_CHAT_ID is correct (your personal ID or group ID, NOT the bot's ID) and that you have started a conversation with the bot by sending it a message or pressing /start.");
+        console.error(
+          "Hint: Make sure the TELEGRAM_CHAT_ID is correct (your personal ID or group ID, NOT the bot's ID) and that you have started a conversation with the bot by sending it a message or pressing /start.",
+        );
       }
     }
   } else {
     // If no telegram bot configured, auto-approve after 5 seconds to allow testing
-    console.log(`[Review] Received submission ${id}. No Telegram bot configured. Auto-approving in 5s.`);
+    console.log(
+      `[Review] Received submission ${id}. No Telegram bot configured. Auto-approving in 5s.`,
+    );
     setTimeout(async () => {
       const sub = submissions.get(id);
       if (sub) {
-        if (sub.imageBase64 && sub.imageBase64.startsWith('data:image')) {
-          console.log(`[Review] Uploading image for auto-approved submission ${id}...`);
+        if (sub.imageBase64 && sub.imageBase64.startsWith("data:image")) {
+          console.log(
+            `[Review] Uploading image for auto-approved submission ${id}...`,
+          );
           const url = await uploadToBunny(sub.imageBase64);
           if (url) {
             sub.details = sub.details || {};
             sub.details.photoDataUrl = url;
+            delete sub.imageBase64;
           } else {
-             console.log(`[Review] BunnyCDN fail, using placeholder...`);
-             sub.details = sub.details || {};
-             sub.details.photoDataUrl = "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
+            console.log(`[Review] BunnyCDN fail, using placeholder...`);
+            sub.details = sub.details || {};
+            sub.details.photoDataUrl =
+              "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?ixlib=rb-4.0.3&auto=format&fit=crop&w=400&q=80"; // fallback
+            delete sub.imageBase64;
           }
         }
-        sub.status = 'approved';
+        sub.status = "approved";
+        saveSubmissions();
       }
     }, 5000);
   }
 
-  res.json({ success: true, status: 'under_review' });
+  res.json({ success: true, status: "under_review" });
 });
 
 app.get("/api/submission-status/:id", (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
   const sub = submissions.get(req.params.id);
   if (!sub) return res.status(404).json({ error: "Not found" });
-  res.json({ status: sub.status, details: sub.status === 'approved' ? sub.details : undefined });
+  res.json({
+    status: sub.status,
+    details: sub.status === "approved" ? sub.details : undefined,
+  });
 });
-
 
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -202,10 +366,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

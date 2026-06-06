@@ -61,27 +61,36 @@ export default function AllCatsList() {
                   <div className="w-full h-full bg-orange-100 flex items-center justify-center text-2xl">🐈</div>
                 )}
               </div>
-              <div className="flex-1 flex flex-col justify-center">
+              <div className="flex-1 flex flex-col justify-center min-w-0">
                 <div className="flex items-center justify-between">
-                  <div className="flex flex-col">
+                  <div className="flex flex-col min-w-0">
                     <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider mb-0.5">{cat.animalType || 'Cat'}</span>
                     <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
                       {cat.name || `Straykin #${cat.id.slice(-4)}`}
                     </h3>
                   </div>
                   {cat.status === 'under_review' && (
-                    <span className="shrink-0 bg-amber-100 text-amber-700 text-[10px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
-                      Under Review
+                    <span className="shrink-0 bg-amber-100 text-amber-700 text-[10px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap ml-2">
+                      Review
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-slate-500 font-medium mt-1">
-                  Last check-in: {new Date((cat.last_check_in?.timestamp as any)?.seconds * 1000).toLocaleDateString() ?? 'Unknown'}
+                {cat.locationName ? (
+                   <p className="text-xs text-slate-500 font-medium mt-1 truncate">
+                     {cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}
+                   </p>
+                ) : (
+                   <p className="text-xs text-rose-500 font-bold mt-1 bg-rose-50 border border-rose-100 px-2 py-0.5 rounded max-w-max">
+                     ⚠️ No Address Provided
+                   </p>
+                )}
+                <p className="text-xs text-slate-400 font-medium mt-1">
+                  Last: {new Date((cat.last_check_in?.timestamp as any)?.seconds * 1000).toLocaleDateString() ?? 'Unknown'}
                 </p>
               </div>
             </button>
             {(index + 1) % 3 === 0 && (
-              <AdBanner format="banner" />
+              <AdBanner format="homeBanner" />
             )}
           </React.Fragment>
         ))}

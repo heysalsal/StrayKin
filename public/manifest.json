@@ -1,0 +1,16 @@
+{
+  "name": "Straykin - No Stray Left Behind",
+  "short_name": "Straykin - No Stray Left Behind",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#ffffff",
+  "theme_color": "#ff6900",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "192x192 512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

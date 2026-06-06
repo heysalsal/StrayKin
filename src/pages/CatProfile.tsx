@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useCatDatabase } from "../hooks/useCatDatabase";
 import { useLazyAuth } from "../hooks/useLazyAuth";
 import {
@@ -17,19 +17,22 @@ import {
   ShieldAlert,
   Heart,
   QrCode,
+  Send,
 } from "lucide-react";
 import { CatRecord } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { AdBanner } from "../components/AdBanner";
+import { toPng, toBlob } from "html-to-image";
 
 import Webcam from "react-webcam";
 export default function CatProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { cats, updateCatSighting, updateCatProfile } = useCatDatabase();
+  const location = useLocation();
+  const { cats, updateCatSighting, updateCatProfile, addCheckInLog } = useCatDatabase();
   const { user, loading, upgradeToGoogleAccount } = useLazyAuth();
 
-  const [cat, setCat] = useState<CatRecord | null>(null);
+  const [cat, setCat] = useState<CatRecord | null>(location.state?.cat || null);
   const [showInterstitial, setShowInterstitial] = useState(false);
 
   const [isFavorite, setIsFavorite] = useState(() => {
@@ -63,45 +66,84 @@ export default function CatProfile() {
   }, [user, loading]);
 
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const [mockHistory, setMockHistory] = useState<any[]>([]);
+  const [checkInsHistory, setCheckInsHistory] = useState<any[]>([]);
 
   useEffect(() => {
-    // Generate some mock history data when cat loads
-    if (cat && mockHistory.length === 0) {
-      const h = [];
-      const now = Date.now();
-      const hr = 3600000;
-      // We use the last_check_in as the first item if it exists
-      if (cat.last_check_in && cat.last_check_in.timestamp) {
-        const ts = (cat.last_check_in.timestamp as any)?.seconds
-          ? (cat.last_check_in.timestamp as any).seconds * 1000
-          : now;
-        h.push({
-          id: "h0",
-          time: ts,
-          fed: cat.last_check_in.was_fed,
-          health: cat.last_check_in.status_health || "Healthy",
-          notes: cat.last_check_in.notes || "",
-          user: user?.isAnonymous
-            ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
-            : user?.displayName || "App User",
-        });
-      }
-      for (let i = 1; i <= 4; i++) {
-        h.push({
-          id: `h${i}`,
-          time: now - i * 24 * hr - Math.random() * hr,
-          fed: Math.random() > 0.3,
-          health: Math.random() > 0.8 ? "Needs Attention" : "Healthy",
-          notes: "",
-          user: Math.random() > 0.5 ? "Anonymous" : "Caretaker",
-        });
-      }
-      setMockHistory(h);
+    if (cat && checkInsHistory.length === 0) {
+      let isSubscribed = true;
+      let unsubscribe: () => void = () => {};
+      const loadHistory = async () => {
+        try {
+          const { collection, query, where, onSnapshot, orderBy, limit } = await import("firebase/firestore");
+          const { db } = await import("../config/firebase");
+          const q = query(
+            collection(db, "check_ins"),
+            where("catId", "==", cat.id),
+            orderBy("timestamp", "desc"),
+            limit(10)
+          );
+          unsubscribe = onSnapshot(q, (snap) => {
+            if (!isSubscribed) return;
+            const realHistory = snap.docs.map(d => ({
+              id: d.id,
+              time: d.data().timestamp?.seconds ? d.data().timestamp.seconds * 1000 : Date.now(),
+              fed: d.data().wasFed,
+              health: d.data().healthStatus || "Healthy",
+              notes: d.data().notes || "",
+              user: "Community Member",
+              status: d.data().status
+            }));
+            
+            const h = [...realHistory];
+            const now = Date.now();
+            const hr = 3600000;
+            // We use the last_check_in as the first item if it exists and we don't have real logs
+            if (realHistory.length === 0 && cat.last_check_in && cat.last_check_in.timestamp) {
+              const ts = (cat.last_check_in.timestamp as any)?.seconds
+                ? (cat.last_check_in.timestamp as any).seconds * 1000
+                : now;
+              h.push({
+                id: "h0",
+                time: ts,
+                fed: cat.last_check_in.was_fed,
+                health: cat.last_check_in.status_health || "Healthy",
+                notes: cat.last_check_in.notes || "",
+                user: user?.isAnonymous
+                  ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
+                  : user?.displayName || "App User",
+                status: "approved"
+              });
+            }
+            // generate some old data placeholders? 
+            if (h.length < 5) {
+              for (let i = 1; i <= 4; i++) {
+                h.push({
+                  id: `h${i}`,
+                  time: now - i * 24 * hr - Math.random() * hr,
+                  fed: Math.random() > 0.3,
+                  health: Math.random() > 0.8 ? "Needs Attention" : "Healthy",
+                  notes: "",
+                  user: Math.random() > 0.5 ? "Anonymous" : "Caretaker",
+                  status: "approved"
+                });
+              }
+            }
+            setCheckInsHistory(h);
+          });
+        } catch (err) {
+          console.error("Failed to fetch history", err);
+        }
+      };
+      loadHistory();
+      return () => {
+        isSubscribed = false;
+        unsubscribe();
+      };
     }
-  }, [cat]);
+  }, [cat?.id]);
 
   const [newTagInput, setNewTagInput] = useState("");
+  const [newTraitInput, setNewTraitInput] = useState("");
 
   // Check-in state
   const [wasFed, setWasFed] = useState<boolean | null>(null);
@@ -120,6 +162,24 @@ export default function CatProfile() {
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [hasPhoto, setHasPhoto] = useState(false);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [shareImgSrc, setShareImgSrc] = useState<string | undefined>();
+  const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
+  useEffect(() => {
+    if (isShareOpen) {
+      const src = photoDataUrl || (cat ? cat.imageUrl : undefined);
+      if (src && src.startsWith("http")) {
+        fetch(`/api/proxy-image?url=${encodeURIComponent(src)}`)
+          .then(res => res.blob())
+          .then(blob => {
+            const reader = new FileReader();
+            reader.onloadend = () => setShareImgSrc(reader.result as string);
+            reader.readAsDataURL(blob);
+          }).catch(() => setShareImgSrc(src));
+      } else {
+        setShareImgSrc(src);
+      }
+    }
+  }, [isShareOpen, photoDataUrl, cat?.imageUrl]);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [reportStep, setReportStep] = useState<"camera" | "form">("camera");
   const [photoAttempts, setPhotoAttempts] = useState(0);
@@ -269,7 +329,7 @@ export default function CatProfile() {
       currentVoted = votedGallery;
     }
 
-    const isDevoting = currentVoted.includes(itemId.toLowerCase());
+    const isDevoting = currentVoted.includes(itemId?.toLowerCase() || "");
 
     if (!isDevoting && currentSpent >= 3) {
       alert(`You used all 3 votes for ${category} on this Straykin!`);
@@ -278,8 +338,8 @@ export default function CatProfile() {
 
     const newSpent = isDevoting ? currentSpent - 1 : currentSpent + 1;
     const newVoted = isDevoting
-      ? currentVoted.filter((id) => id !== itemId.toLowerCase())
-      : [...currentVoted, itemId.toLowerCase()];
+      ? currentVoted.filter((id) => id !== (itemId?.toLowerCase() || ""))
+      : [...currentVoted, itemId?.toLowerCase() || ""];
 
     if (category === "names") {
       setVotesSpentNames(newSpent);
@@ -315,11 +375,17 @@ export default function CatProfile() {
       `You voted for name "${nameToVote}"!`,
     );
     if (change !== 0 && cat && id) {
-      const newNames = (cat.names || []).map((n) =>
-        n.name === nameToVote
-          ? { ...n, votes: Math.max(0, n.votes + change) }
-          : n,
-      );
+      let found = false;
+      let newNames = (cat.names || []).map((n) => {
+        if (n.name === nameToVote) {
+          found = true;
+          return { ...n, votes: Math.max(0, n.votes + change) };
+        }
+        return n;
+      });
+      if (!found) {
+        newNames = [...newNames, { name: nameToVote, votes: Math.max(0, change), suggestedBy: "community" }];
+      }
       setCat((prev) => (prev ? { ...prev, names: newNames } : prev));
       await updateCatProfile(id, { names: newNames }).catch(() => {});
     }
@@ -374,6 +440,9 @@ export default function CatProfile() {
     }
 
     setTimeout(async () => {
+      const isQualifiedForGallery = !!(user && !user.isAnonymous && user.emailVerified);
+      const actualAddToGallery = addToGallery && isQualifiedForGallery;
+
       // Send to manual review
       const submissionId = `checkin_${Date.now()}`;
       try {
@@ -388,27 +457,47 @@ export default function CatProfile() {
               wasFed,
               healthStatus,
               geo_point,
+              addToGallery: actualAddToGallery,
+              submittedBy: user?.uid,
             },
             imageBase64: photoDataUrl,
           }),
         });
         alert("Check-in submitted and is under review!");
-        await updateCatSighting(cat.id, {
+        await addCheckInLog({
+          catId: cat.id,
           wasFed,
-          activities: wasFed ? ["Feed"] : [],
-          notes: healthStatus !== "Good" ? healthStatus : undefined,
+          healthStatus,
+          geo_point,
           photoDataUrl,
+          addToGallery: actualAddToGallery,
           status: "under_review",
           submissionId,
+          submittedBy: user?.uid,
         });
       } catch (err) {
         console.error("Failed to submit:", err);
         alert("Submitted (offline preview mode).");
+        await addCheckInLog({
+          catId: cat.id,
+          wasFed,
+          healthStatus,
+          geo_point,
+          photoDataUrl,
+          addToGallery: actualAddToGallery,
+          status: "approved",
+          submissionId,
+          submittedBy: user?.uid,
+        });
         await updateCatSighting(cat.id, {
           wasFed,
           activities: wasFed ? ["Feed"] : [],
           notes: healthStatus !== "Good" ? healthStatus : undefined,
           photoDataUrl,
+          addToGallery: actualAddToGallery,
+          isCheckIn: true,
+          status: "approved",
+          submittedBy: user?.uid,
         });
       }
 
@@ -490,9 +579,9 @@ export default function CatProfile() {
           </button>
           <h2 className="text-2xl font-black text-slate-800 mb-2">Sponsor</h2>
           <p className="text-slate-500 text-sm font-medium text-center mb-8">
-            Adsterra Advertisement
+            Advertisement
           </p>
-          <AdBanner format="rectangle" />
+          <AdBanner format="skyscraper" />
           <button
             onClick={() => setShowInterstitial(false)}
             className="px-8 py-4 mt-8 bg-orange-500 text-white rounded-2xl font-bold shadow-lg shadow-orange-200"
@@ -589,7 +678,7 @@ export default function CatProfile() {
 
           <p className="text-sm font-medium text-white/80 flex items-center gap-2 mb-4">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"></span>
-            Last seen recently
+            Last seen {cat.locationName ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}` : "recently"}
           </p>
 
           {/* Check-In History Accordion (Moved here under tray) */}
@@ -620,7 +709,7 @@ export default function CatProfile() {
                   className="overflow-hidden"
                 >
                   <div className="p-4 pt-0 space-y-3">
-                    {mockHistory.map((item, idx) => (
+                    {checkInsHistory.map((item, idx) => (
                       <div
                         key={item.id}
                         className="flex gap-4 items-start p-3 bg-black/20 rounded-xl"
@@ -640,6 +729,11 @@ export default function CatProfile() {
                             </span>
                           </div>
                           <div className="flex flex-wrap gap-1 mb-1">
+                            {item.status && item.status !== "approved" && (
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${item.status === 'under_review' ? 'text-yellow-300 bg-yellow-500/20' : 'text-red-300 bg-red-500/20'}`}>
+                                {item.status === 'under_review' ? 'Pending' : 'Rejected'}
+                              </span>
+                            )}
                             {item.fed && (
                               <span className="text-[10px] font-bold text-orange-200 bg-orange-500/20 px-2 py-0.5 rounded-md">
                                 Fed
@@ -691,7 +785,7 @@ export default function CatProfile() {
                 <button
                   key={alias.name}
                   onClick={() => handleVoteName(alias.name)}
-                  className={`group flex flex-col items-center border rounded-2xl px-4 py-2 transition-all active:scale-95 ${votedNames.includes(alias.name.toLowerCase()) ? "bg-slate-800 border-orange-500 ring-2 ring-orange-500/50" : "bg-slate-800 border-slate-700/50 hover:bg-slate-700 hover:border-slate-600"}`}
+                  className={`group flex flex-col items-center border rounded-2xl px-4 py-2 transition-all active:scale-95 ${votedNames.includes(alias.name?.toLowerCase() || "") ? "bg-slate-800 border-orange-500 ring-2 ring-orange-500/50" : "bg-slate-800 border-slate-700/50 hover:bg-slate-700 hover:border-slate-600"}`}
                 >
                   <span className="text-sm font-bold text-white mb-1">
                     {alias.name}
@@ -707,7 +801,7 @@ export default function CatProfile() {
               </span>
             )}
           </div>
-          <div className="mt-2 text-white">
+          <div className="mt-2 text-white relative flex gap-2">
             <input
               type="text"
               value={newTagInput}
@@ -716,10 +810,26 @@ export default function CatProfile() {
                 if (val.length <= 8) setNewTagInput(val);
               }}
               onKeyDown={handleSuggestName}
-              placeholder="Suggest a nickname..."
+              placeholder="Suggest an alias (max 8 chars)"
               className="w-full bg-slate-800 text-white placeholder-slate-500 border border-slate-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 transition-colors"
             />
+            <button
+               onClick={() => {
+                 if(newTagInput.trim()) {
+                   // spoof enter key event
+                   handleSuggestName({ key: 'Enter', preventDefault: () => {} } as any);
+                 }
+               }}
+               disabled={!newTagInput.trim()}
+               className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
+            >
+               <Send className="w-4 h-4 text-white" />
+            </button>
           </div>
+        </div>
+
+        <div className="my-4">
+          <AdBanner format="rectangle" />
         </div>
 
         {/* Characteristics / Traits Cloud */}
@@ -750,7 +860,7 @@ export default function CatProfile() {
               ];
               const existingTraitsMap = new Map(
                 (cat.characteristics || []).map((c) => [
-                  c.tag.toLowerCase(),
+                  c.tag?.toLowerCase() || "",
                   c,
                 ]),
               );
@@ -758,7 +868,7 @@ export default function CatProfile() {
               const combinedTraits = [...(cat.characteristics || [])];
 
               defaultTraits.forEach((dt) => {
-                if (!existingTraitsMap.has(dt.toLowerCase())) {
+                if (!existingTraitsMap.has(dt?.toLowerCase() || "")) {
                   combinedTraits.push({ tag: dt, votes: 0 });
                 }
               });
@@ -777,7 +887,7 @@ export default function CatProfile() {
                       if (change !== 0 && cat && id) {
                         const chars = cat.characteristics || [];
                         const exists = chars.find(
-                          (c) => c.tag.toLowerCase() === char.tag.toLowerCase(),
+                          (c) => (c.tag?.toLowerCase() || "") === (char.tag?.toLowerCase() || ""),
                         );
                         let newTraits = [];
                         if (exists) {
@@ -797,7 +907,7 @@ export default function CatProfile() {
                         }).catch(() => {});
                       }
                     }}
-                    className={`group flex flex-col items-center border rounded-2xl px-4 py-2 transition-all active:scale-95 ${votedTraits.includes(char.tag.toLowerCase()) ? "bg-orange-50 border-orange-500 ring-2 ring-orange-500/50" : char.votes > 0 ? "bg-slate-50 border-slate-200 hover:bg-orange-50 hover:border-orange-200" : "bg-transparent border-dashed border-slate-300 hover:border-orange-300 hover:bg-orange-50/50"}`}
+                    className={`group flex flex-col items-center border rounded-2xl px-4 py-2 transition-all active:scale-95 ${votedTraits.includes(char.tag?.toLowerCase() || "") ? "bg-orange-50 border-orange-500 ring-2 ring-orange-500/50" : char.votes > 0 ? "bg-slate-50 border-slate-200 hover:bg-orange-50 hover:border-orange-200" : "bg-transparent border-dashed border-slate-300 hover:border-orange-300 hover:bg-orange-50/50"}`}
                   >
                     <span
                       className={`text-sm font-bold mb-1 ${char.votes > 0 ? "text-slate-700" : "text-slate-500 group-hover:text-orange-700"}`}
@@ -813,19 +923,21 @@ export default function CatProfile() {
                 ));
             })()}
           </div>
-          <div className="mt-2">
+          <div className="mt-2 relative flex gap-2">
             <input
               type="text"
+              value={newTraitInput}
+              onChange={(e) => setNewTraitInput(e.target.value)}
               onKeyDown={async (e) => {
-                if (e.key === "Enter" && e.currentTarget.value.trim()) {
-                  const suggestValue = e.currentTarget.value.trim();
+                if (e.key === "Enter" && newTraitInput.trim()) {
+                  const suggestValue = newTraitInput.trim();
                   const change = await executeWithVotePower(
                     "traits",
                     suggestValue,
                     `Suggested trait: ${suggestValue}!`,
                   );
                   if (change === 1 && cat && id) {
-                    e.currentTarget.value = "";
+                    setNewTraitInput("");
                     const newTraits = [
                       ...(cat.characteristics || []),
                       { tag: suggestValue, votes: 1 },
@@ -842,6 +954,35 @@ export default function CatProfile() {
               placeholder="Add a trait (e.g., Friendly, Vocal)..."
               className="w-full bg-slate-50 text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 focus:bg-white transition-colors"
             />
+            <button
+               onClick={async () => {
+                 if(newTraitInput.trim()) {
+                  const suggestValue = newTraitInput.trim();
+                  const change = await executeWithVotePower(
+                    "traits",
+                    suggestValue,
+                    `Suggested trait: ${suggestValue}!`,
+                  );
+                  if (change === 1 && cat && id) {
+                    setNewTraitInput("");
+                    const newTraits = [
+                      ...(cat.characteristics || []),
+                      { tag: suggestValue, votes: 1 },
+                    ];
+                    setCat((prev) =>
+                      prev ? { ...prev, characteristics: newTraits } : prev,
+                    );
+                    await updateCatProfile(id, {
+                      characteristics: newTraits,
+                    }).catch(() => {});
+                  }
+                 }
+               }}
+               disabled={!newTraitInput.trim()}
+               className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
+            >
+               <Send className="w-4 h-4 text-white" />
+            </button>
           </div>
         </div>
 
@@ -881,16 +1022,22 @@ export default function CatProfile() {
                   />
                   <div className="absolute bottom-2 right-2 flex gap-1">
                     <button
-                      onClick={() =>
-                        executeWithVotePower(
-                          "gallery",
-                          "main",
-                          "You voted for this photo!",
-                        )
-                      }
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const change = await executeWithVotePower(
+                           "gallery",
+                           "main",
+                           "You voted for this photo!",
+                        );
+                        if (change !== 0 && cat && id) {
+                          const newVotes = Math.max(0, (cat.imageUrlVotes || 0) + change);
+                          setCat((prev) => prev ? { ...prev, imageUrlVotes: newVotes } : prev);
+                          await updateCatProfile(id, { imageUrlVotes: newVotes }).catch(() => {});
+                        }
+                      }}
                       className={`bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 transition-colors ${votedGallery.includes("main") ? "text-orange-400 ring-1 ring-orange-500 border border-orange-500" : "hover:bg-orange-500"}`}
                     >
-                      ♥️ {Math.floor(Math.random() * 20) + 5}
+                      ♥️ {cat.imageUrlVotes || 0}
                     </button>
                   </div>
                 </div>
@@ -977,6 +1124,8 @@ export default function CatProfile() {
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
+            screenshotQuality={0.6}
+            videoConstraints={{ facingMode: "environment", width: 800 }}
             className="absolute inset-0 w-full h-full object-cover"
           />
 
@@ -1375,59 +1524,101 @@ export default function CatProfile() {
           <div className="w-full max-w-sm flex justify-between items-center mb-6">
             <h2 className="text-xl font-black">Share Sighting</h2>
             <button
-              onClick={() => setIsShareOpen(false)}
+              onClick={() => {
+                setIsShareOpen(false);
+                setShareFinalImage(null);
+              }}
               className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center font-bold"
             >
               ✕
             </button>
           </div>
 
-          <div className="w-full max-w-sm aspect-[9/16] bg-slate-900 rounded-[2.5rem] overflow-hidden relative shadow-2xl border border-slate-800 flex flex-col">
-            <img
-              src={photoDataUrl || cat.imageUrl}
-              className="w-full h-3/5 object-cover"
-            />
-            <div className="flex-1 bg-gradient-to-b from-orange-500 to-orange-600 p-6 flex flex-col justify-between">
-              <div>
-                <h3 className="text-4xl font-black text-white leading-none mb-2">
-                  {topName}
-                </h3>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
-                  <p className="text-sm font-bold text-white/90">
-                    Spotted near me
-                  </p>
-                </div>
-                <p className="text-xs font-medium text-white/80">
-                  Has been fed by{" "}
-                  {user?.isAnonymous
-                    ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
-                    : userSettings.displayName ||
-                      user?.displayName ||
-                      "A Kind Soul"}
-                </p>
+          {shareFinalImage ? (
+            <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95">
+              <img src={shareFinalImage} className="w-full rounded-[2.5rem] shadow-2xl mb-6" />
+              <p className="text-white text-sm font-bold bg-white/20 px-4 py-2 rounded-full animate-pulse">
+                Long press the image to save or share
+              </p>
+            </div>
+          ) : (
+            <>
+            <div id="shareCard" className="w-full max-w-sm aspect-[9/16] bg-slate-100 rounded-[2.5rem] overflow-hidden relative shadow-2xl flex flex-col">
+              <div className="w-full h-full absolute inset-0">
+                <img
+                  src={shareImgSrc || photoDataUrl || cat.imageUrl}
+                  className="w-full h-[65%] object-cover"
+                  crossOrigin={(shareImgSrc || photoDataUrl || cat.imageUrl)?.startsWith("http") ? "anonymous" : undefined}
+                />
               </div>
-
-              <div className="flex justify-between items-end">
-                <button className="bg-white text-orange-600 px-6 py-3 rounded-full text-sm font-black shadow-lg">
-                  Try Now
-                </button>
-                <div className="w-16 h-16 bg-white p-1 rounded-xl shadow-lg">
-                  <img
-                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`}
-                    alt="QR Code"
-                    className="w-full h-full object-contain"
-                  />
+              <div className="w-full h-[45%] absolute bottom-0 left-0">
+                <img src="/card.png" className="w-full h-full object-fill absolute inset-0 z-10" crossOrigin="anonymous" />
+                <div className="relative z-20 w-full h-full p-8 pt-16 flex flex-col justify-between">
+                  <div className="flex justify-between items-start gap-2 pb-[6px] mb-[6px] mt-[9px]">
+                    <div className="flex-1 pr-2">
+                      <h3 className="text-4xl font-black text-white leading-none break-words mb-0 pb-0">
+                        {topName}
+                      </h3>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>
+                        <p className="text-sm font-bold text-white/90 truncate">
+                          {cat.locationName ? (cat.locationName.length > 25 ? cat.locationName.substring(0, 25) + "..." : cat.locationName) : "Spotted near me"}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-white/90">
+                        Has been fed by{" "}
+                        {user?.isAnonymous
+                          ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
+                          : userSettings.displayName ||
+                            user?.displayName ||
+                            "A Kind Soul"}
+                      </p>
+                    </div>
+                    <div className="w-16 h-16 bg-white rounded-xl shadow-lg shrink-0 overflow-hidden">
+                      <img
+                        src={`/api/proxy-image?url=${encodeURIComponent(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`)}`}
+                        alt="QR Code"
+                        className="w-full h-full object-contain p-1"
+                        crossOrigin="anonymous"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-start items-end -mt-4">
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
           <div className="w-full max-w-sm mt-8 flex gap-4">
             <button
-              onClick={() => {
-                alert("Poster image saved to device!");
-                setIsShareOpen(false);
+              onClick={async () => {
+                const el = document.getElementById("shareCard");
+                if(el) {
+                  try {
+                    const pixelRatio = 1080 / el.offsetWidth;
+                    const dataUrl = await toPng(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
+                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+                    if (isIOS) {
+                      setShareFinalImage(dataUrl);
+                      return;
+                    }
+
+                    const approved = localStorage.getItem("save_image_approved");
+                    if (!approved) {
+                      const proceed = window.confirm("Do you want to save this image? (We won't ask again)");
+                      if (!proceed) return;
+                      localStorage.setItem("save_image_approved", "true");
+                    }
+
+                    const link = document.createElement("a");
+                    link.download = `straykin_${cat.id}.png`;
+                    link.href = dataUrl;
+                    link.click();
+                    setIsShareOpen(false);
+                  } catch (e) {
+                    console.error("Failed to generate image", e);
+                  }
+                }
               }}
               className="flex-1 py-4 bg-slate-800 text-white rounded-2xl font-black"
             >
@@ -1435,29 +1626,47 @@ export default function CatProfile() {
             </button>
             <button
               onClick={async () => {
-                try {
-                  const imgUrl =
-                    photoDataUrl || cat.imageUrl || cat.photoDataUrl;
-                  if (imgUrl && navigator.share) {
-                    const response = await fetch(imgUrl);
-                    const blob = await response.blob();
-                    const file = new File([blob], "straykin.jpg", {
-                      type: blob.type,
-                    });
-                    if (
-                      navigator.canShare &&
-                      navigator.canShare({ files: [file] })
-                    ) {
-                      await navigator.share({
-                        title: `Spotted ${cat.name || "a Straykin"}!`,
-                        files: [file],
-                      });
+                const el = document.getElementById("shareCard");
+                if(el) {
+                  try {
+                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+                    const pixelRatio = 1080 / el.offsetWidth;
+                    
+                    if (isIOS) {
+                      const dataUrl = await toPng(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
+                      setShareFinalImage(dataUrl);
                       return;
                     }
+
+                    const blob = await toBlob(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
+                    const approved = localStorage.getItem("share_stray_approved");
+                    if (!approved) {
+                      const proceed = window.confirm("Do you want to share this stray? (We won't ask again)");
+                      if (!proceed) return;
+                      localStorage.setItem("share_stray_approved", "true");
+                    }
+                    if (!blob) return;
+                    {
+                      const file = new File([blob], "straykin.jpg", {
+                        type: blob.type,
+                      });
+                      if (
+                        navigator.canShare &&
+                        navigator.canShare({ files: [file] })
+                      ) {
+                        await navigator.share({
+                          title: `Spotted ${cat.name || "a Straykin"}!`,
+                          text: `Check out ${cat.name || "this stray"} on Straykin!`,
+                          files: [file],
+                        });
+                        setIsShareOpen(false);
+                      } else {
+                        alert("Sharing is not supported on this device.");
+                      }
+                    }
+                  } catch (e) {
+                    console.error("Failed to generate image", e);
                   }
-                  alert("Sharing image to app simulated!");
-                } catch (e) {
-                  console.error(e);
                 }
               }}
               className="flex-1 py-4 bg-orange-500 text-white rounded-2xl font-black"
@@ -1465,6 +1674,8 @@ export default function CatProfile() {
               Share Image
             </button>
           </div>
+          </>
+        )}
         </div>
       )}
     </div>

@@ -15,11 +15,12 @@ export interface CatRecord {
   lat: number;
   lng: number;
   animalType?: string; // e.g. 'Cat', 'Dog', 'Other'
-  name?: string; // Currently used, we might deprecate this soon in favor of names array, but keep for backward compat
+  name?: string;
   names?: Array<{ name: string; votes: number; suggestedBy: string }>;
   genderVotes?: { male: number; female: number; unknown: number };
   sterilizedVotes?: number;
   imageUrl?: string;
+  imageUrlVotes?: number;
   description?: string;
   managed_by_ngo_url?: string;
   color_tags?: string[];
@@ -30,6 +31,7 @@ export interface CatRecord {
   caretakers?: string[]; // Array of user UIDs who claimed this pet
   characteristics?: Array<{ tag: string; votes: number }>;
   gallery?: Array<{ id: string; url: string; timestamp: number; votes: number; submittedBy?: string }>;
+  locationName?: string;
   last_check_in: {
     timestamp: Timestamp | { seconds: number, nanoseconds: number, toMillis?: () => number };
     was_fed: boolean;

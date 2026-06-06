@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import {
   ChevronLeft,
   Images,
@@ -15,18 +15,107 @@ import {
 import { useLazyAuth } from "../hooks/useLazyAuth";
 import { motion, AnimatePresence } from "motion/react";
 import { AdBanner } from "../components/AdBanner";
+import { toPng, toBlob } from "html-to-image";
 
 export default function PetProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   // using a mock pet object. In a real scenario we fetch the actual pet based on id.
-  const [pet, setPet] = useState<any>(null);
+  const [pet, setPet] = useState<any>(location.state?.pet || null);
   const [isDistanceFar, setIsDistanceFar] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
+
+  useEffect(() => {
+    if (showShare && window.location.href) {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`;
+      fetch(`/api/proxy-image?url=${encodeURIComponent(qrUrl)}`)
+        .then(res => res.blob())
+        .then(blob => {
+          const reader = new FileReader();
+          reader.onloadend = () => setQrCodeDataUrl(reader.result as string);
+          reader.readAsDataURL(blob);
+        }).catch(() => setQrCodeDataUrl(qrUrl));
+    }
+  }, [showShare]);
+  const [collabTab, setCollabTab] = useState<"code" | "collaborators" | "requests">("code");
+  const [isUpdatingCollab, setIsUpdatingCollab] = useState(false);
+
+  const handleApproveRequest = async (req: any) => {
+    setIsUpdatingCollab(true);
+    try {
+      const { doc, updateDoc, arrayRemove, arrayUnion } = await import('firebase/firestore');
+      const { db } = await import('../config/firebase');
+      const petRef = doc(db, 'pets', pet.id);
+      
+      const newCollab = { uid: req.uid, displayName: req.displayName || req.email, email: req.email };
+      await updateDoc(petRef, {
+        collaboratorRequests: arrayRemove(req),
+        collaborators: arrayUnion(newCollab),
+        caretakers: arrayUnion(req.uid)
+      });
+      setPet({
+        ...pet,
+        collaboratorRequests: (pet.collaboratorRequests || []).filter((r: any) => r.uid !== req.uid),
+        collaborators: [...(pet.collaborators || []), newCollab],
+        caretakers: [...(pet.caretakers || []), req.uid]
+      });
+    } catch(e) {
+      console.error(e);
+      alert("Failed to approve");
+    }
+    setIsUpdatingCollab(false);
+  };
+
+  const handleRejectRequest = async (req: any) => {
+    setIsUpdatingCollab(true);
+    try {
+      const { doc, updateDoc, arrayRemove } = await import('firebase/firestore');
+      const { db } = await import('../config/firebase');
+      const petRef = doc(db, 'pets', pet.id);
+      
+      await updateDoc(petRef, {
+        collaboratorRequests: arrayRemove(req)
+      });
+      setPet({
+        ...pet,
+        collaboratorRequests: (pet.collaboratorRequests || []).filter((r: any) => r.uid !== req.uid)
+      });
+    } catch(e) {
+      alert("Failed to reject");
+    }
+    setIsUpdatingCollab(false);
+  };
+
+  const handleRemoveCollaborator = async (collab: any) => {
+    if (!window.confirm(`Remove ${collab.displayName || collab.email} from collaborators?`)) return;
+    setIsUpdatingCollab(true);
+    try {
+      const { doc, updateDoc, arrayRemove } = await import('firebase/firestore');
+      const { db } = await import('../config/firebase');
+      const petRef = doc(db, 'pets', pet.id);
+      
+      await updateDoc(petRef, {
+        collaborators: arrayRemove(collab),
+        caretakers: arrayRemove(collab.uid)
+      });
+      setPet({
+        ...pet,
+        collaborators: (pet.collaborators || []).filter((c: any) => c.uid !== collab.uid),
+        caretakers: (pet.caretakers || []).filter((id: string) => id !== collab.uid)
+      });
+    } catch(e) {
+      alert("Failed to remove");
+    }
+    setIsUpdatingCollab(false);
+  };
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+  const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [publicToggleConfirm, setPublicToggleConfirm] = useState<{nextStatus: string} | null>(null);
 
   // Using user profile to find our own pet to check if we are the owner
   const { user } = useLazyAuth();
@@ -52,36 +141,116 @@ export default function PetProfile() {
 
       if (!foundPet) {
         try {
-          const { doc, getDoc } = await import('firebase/firestore');
-          const { db } = await import('../config/firebase');
-          const petRef = doc(db, 'pets', id as string);
+          const { doc, getDoc } = await import("firebase/firestore");
+          const { db } = await import("../config/firebase");
+          const petRef = doc(db, "pets", id as string);
           const petSnap = await getDoc(petRef);
-          
+
           if (petSnap.exists()) {
-            foundPet = { ...petSnap.data(), id: petSnap.id, isOwner: false, distanceKm: Math.random() * 3 };
+            foundPet = {
+              ...petSnap.data(),
+              id: petSnap.id,
+              isOwner: false,
+              distanceKm: Math.random() * 3,
+            };
             if (foundPet.distanceKm > 1) {
               setIsDistanceFar(true);
             }
           }
-        } catch(e) {
+        } catch (e) {
           console.error("Failed to fetch pet from firebase", e);
         }
       }
 
       if (foundPet) {
+        foundPet.isPrimaryOwner = false;
+        
+        // Also fix isOwner if they fetched from Firebase but are actually the owner/caretaker
+        if (user && user.uid) {
+          if (foundPet.ownerId === user.uid) {
+            foundPet.isOwner = true;
+          }
+          if (foundPet.caretakers && foundPet.caretakers.includes(user.uid)) {
+            foundPet.isOwner = true;
+          }
+        }
+
+        if (user && user.uid && foundPet.ownerId === user.uid) {
+          foundPet.isPrimaryOwner = true;
+        } else if ((!foundPet.ownerId || foundPet.ownerId === "anonymous") && foundPet.isOwner) {
+          // Fallback for older pets or pets created anonymously before login
+          foundPet.isPrimaryOwner = true;
+          
+          if (user && user.uid && !user.isAnonymous) {
+            foundPet.ownerId = user.uid;
+            try {
+              import("firebase/firestore").then(({ doc, updateDoc }) => {
+                import("../config/firebase").then(({ db }) => {
+                  updateDoc(doc(db, "pets", foundPet.id), { ownerId: user.uid }).catch(() => {});
+                });
+              });
+            } catch (e) {}
+
+            if (p) {
+              const parsed = JSON.parse(p);
+              const updatedPets = parsed.pets.map((pt: any) =>
+                pt.id === id ? { ...pt, ownerId: user.uid } : pt,
+              );
+              localStorage.setItem(
+                "user_profile",
+                JSON.stringify({ ...parsed, pets: updatedPets }),
+              );
+            }
+          }
+        }
+
+        if (foundPet.isPrimaryOwner && !foundPet.inviteCode) {
+          const newCode = Math.random()
+            .toString(36)
+            .substring(2, 8)
+            .toUpperCase();
+          foundPet.inviteCode = newCode;
+
+          if (p) {
+            const parsed = JSON.parse(p);
+            const updatedPets = parsed.pets.map((pt: any) =>
+              pt.id === id ? { ...pt, inviteCode: newCode } : pt,
+            );
+            localStorage.setItem(
+              "user_profile",
+              JSON.stringify({ ...parsed, pets: updatedPets }),
+            );
+          }
+
+          try {
+            const { doc, updateDoc } = await import("firebase/firestore");
+            const { db } = await import("../config/firebase");
+            await updateDoc(doc(db, "pets", id as string), {
+              inviteCode: newCode,
+            });
+          } catch (e) {}
+        }
         setPet(foundPet);
       } else {
         alert("Pet profile not found.");
         navigate("/");
       }
     };
-    
+
     fetchPet();
-  }, [id, navigate]);
+  }, [id, navigate, user]);
 
   const togglePublicStatus = async () => {
     if (!pet?.isOwner) return;
-    const newStatus = pet.status === "public" ? "private" : "public";
+    const nextStatus = pet.status === "public" ? "private" : "public";
+    setPublicToggleConfirm({ nextStatus });
+  };
+
+  const executeTogglePublicStatus = async () => {
+    if (!pet?.isOwner || !publicToggleConfirm) return;
+    const newStatus = publicToggleConfirm.nextStatus;
+    setPublicToggleConfirm(null);
+    
     setPet({ ...pet, status: newStatus });
 
     const p = localStorage.getItem("user_profile");
@@ -95,13 +264,26 @@ export default function PetProfile() {
         JSON.stringify({ ...parsed, pets: updatedPets }),
       );
     }
-    
+
     try {
-      const { doc, updateDoc } = await import('firebase/firestore');
-      const { db } = await import('../config/firebase');
-      const petRef = doc(db, 'pets', pet.id);
-      await updateDoc(petRef, { status: newStatus });
-    } catch(e) {
+      const { doc, updateDoc } = await import("firebase/firestore");
+      const { db } = await import("../config/firebase");
+      const petRef = doc(db, "pets", pet.id);
+      
+      let updates: any = { status: newStatus };
+      const cachedPos = sessionStorage.getItem("strayapp_pos");
+      if (cachedPos) {
+        try {
+          const parsed = JSON.parse(cachedPos);
+          if (Array.isArray(parsed) && parsed.length === 2) {
+            updates.lat = parsed[0];
+            updates.lng = parsed[1];
+          }
+        } catch(e) {}
+      }
+      
+      await updateDoc(petRef, updates);
+    } catch (e) {
       console.error("Failed to update status on Firebase", e);
     }
   };
@@ -153,9 +335,9 @@ export default function PetProfile() {
           </button>
           <h2 className="text-2xl font-black text-slate-800 mb-2">Sponsor</h2>
           <p className="text-slate-500 text-sm font-medium text-center mb-8">
-            Adsterra Advertisement
+            Advertisement
           </p>
-          <AdBanner format="rectangle" />
+          <AdBanner format="skyscraper" />
           <button
             onClick={() => setShowInterstitial(false)}
             className="px-8 py-4 mt-8 bg-orange-500 text-white rounded-2xl font-bold shadow-lg shadow-orange-200"
@@ -230,25 +412,30 @@ export default function PetProfile() {
 
           {pet.isOwner && (
             <div className="flex gap-2 relative">
-              <button
-                onClick={() => {
-                  setShowShare(!showShare);
-                  setShowSettings(false);
-                }}
-                className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm"
-              >
-                <Share2 className="w-5 h-5 -ml-0.5" />
-              </button>
-              <button
-                onClick={() => {
-                  setShowSettings(!showSettings);
-                  setShowShare(false);
-                }}
-                className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm"
-              >
-                <Settings className="w-6 h-6" />
-              </button>
-              {showSettings && (
+              {pet.isPrimaryOwner && (
+                <button
+                  onClick={() => {
+                    setShowShare(!showShare);
+                    setShowSettings(false);
+                    setCollabTab("code");
+                  }}
+                  className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm"
+                >
+                  <Share2 className="w-5 h-5 -ml-0.5" />
+                </button>
+              )}
+              {pet.isPrimaryOwner && (
+                <button
+                  onClick={() => {
+                    setShowSettings(!showSettings);
+                    setShowShare(false);
+                  }}
+                  className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm"
+                >
+                  <Settings className="w-6 h-6" />
+                </button>
+              )}
+              {showSettings && pet.isPrimaryOwner && (
                 <div className="absolute top-14 right-0 z-50 bg-white rounded-2xl shadow-xl w-64 p-4 animate-in fade-in zoom-in duration-200 origin-top-right border border-slate-100">
                   <h4 className="text-sm font-black text-slate-800 mb-3 border-b border-slate-100 pb-2">
                     Settings
@@ -291,7 +478,7 @@ export default function PetProfile() {
             </span>
             <span className="px-3 py-1 bg-white/20 backdrop-blur-md text-white font-bold text-xs rounded-full border border-white/20 flex items-center gap-1.5 shadow-sm">
               <MapPin className="w-3 h-3 text-white/70" />{" "}
-              {pet.lastLocation || "Unknown Location"}
+              {pet.lastLocation ? (pet.lastLocation.length > 18 ? pet.lastLocation.substring(0, 18) + "..." : pet.lastLocation) : "Unknown Location"}
             </span>
           </div>
         </div>
@@ -347,6 +534,10 @@ export default function PetProfile() {
           </ul>
         </div>
 
+        <div className="my-4">
+          <AdBanner format="rectangle" />
+        </div>
+
         {/* Gallery Section */}
         <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-100 mt-6 relative overflow-hidden group">
           <div className="flex justify-between items-end mb-4">
@@ -363,9 +554,51 @@ export default function PetProfile() {
                 </p>
               </div>
             </div>
-            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-              {pet.gallery?.length || 0} Photos
-            </span>
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                {pet.gallery?.length || 0} Photos
+              </span>
+              {pet.isOwner && (pet.gallery?.length || 0) < 10 && (
+                <label className="text-xs text-indigo-500 font-bold cursor-pointer hover:underline">
+                  + Add Photo
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = async (ev) => {
+                        const base64 = ev.target?.result as string;
+                        try {
+                          const res = await fetch("/api/upload-image", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ imageBase64: base64 }),
+                          });
+                          if (res.ok) {
+                            const data = await res.json();
+                            const newGallery = [
+                              ...(pet.gallery || []),
+                              data.url,
+                            ];
+                            setPet({ ...pet, gallery: newGallery });
+                            const { doc, updateDoc } =
+                              await import("firebase/firestore");
+                            const { db } = await import("../config/firebase");
+                            await updateDoc(doc(db, "pets", pet.id), {
+                              gallery: newGallery,
+                            });
+                          }
+                        } catch (err) {}
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+              )}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2 mt-4">
             {pet.gallery && pet.gallery.length > 0 ? (
@@ -479,66 +712,206 @@ export default function PetProfile() {
             >
               <X className="w-4 h-4" />
             </button>
-            <h3 className="text-xl font-black text-slate-800 mb-2">
-              Adoption Hub
-            </h3>
-            <p className="text-sm font-medium text-slate-500 mb-6 border-b border-slate-100 pb-4">
-              Share this code with someone to allow them to claim your pet
-              profile.
-            </p>
-
-            <div className="bg-slate-50 p-4 rounded-2xl flex flex-col items-center border border-slate-200 shadow-inner mb-6">
-              <span className="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest">
-                Invitation Code
-              </span>
-              <div className="font-mono text-4xl font-black text-slate-800 tracking-[0.2em] mb-1">
-                {pet.inviteCode || "X9K2M4"}
-              </div>
-              <button
-                onClick={() =>
-                  alert("Image saved or copied to clipboard! (Simulated)")
-                }
-                className="flex items-center gap-2 mt-4 text-indigo-600 font-bold bg-indigo-50 px-4 py-2 rounded-xl text-sm transition-colors hover:bg-indigo-100 active:scale-95"
-              >
-                <QrCode className="w-4 h-4" /> Share via Image
+            <h3 className="text-xl font-black text-slate-800 mb-2">Caretaker Hub</h3>
+            {pet.isPrimaryOwner ? (
+              <>
+            <div className="flex gap-2 mb-4 bg-slate-100 p-1 rounded-xl">
+              <button onClick={() => setCollabTab("code")} className={`flex-1 text-xs font-bold py-2 rounded-lg ${collabTab === "code" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Code</button>
+              <button onClick={() => setCollabTab("collaborators")} className={`flex-1 text-xs font-bold py-2 rounded-lg ${collabTab === "collaborators" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>Caretakers</button>
+              <button onClick={() => setCollabTab("requests")} className={`flex-1 text-xs font-bold py-2 rounded-lg relative ${collabTab === "requests" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+                Requests
+                {(pet.collaboratorRequests?.length || 0) > 0 && (
+                  <span className="absolute top-1 right-2 w-2 h-2 rounded-full bg-red-500" />
+                )}
               </button>
             </div>
+                {collabTab === "code" && (
+                  <>
+                <p className="text-sm font-medium text-slate-500 mb-6 border-b border-slate-100 pb-4">
+                  Share this code with someone to allow them to be a caretaker for your pet
+                  profile.
+                </p>
 
-            <div>
-              <h4 className="font-bold text-slate-800 mb-3 text-sm flex items-center justify-between">
-                Waiting List
-                <span className="bg-slate-800 text-white text-[10px] px-2 py-0.5 rounded-full">
-                  1 Pending
-                </span>
-              </h4>
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center justify-between shadow-sm">
-                <div>
-                  <span className="text-sm font-black text-slate-800 block">
-                    Stray Rescuer
+                <div
+                  id="petShareCard"
+                  className="bg-gradient-to-br from-green-500 to-emerald-600 p-6 rounded-3xl flex flex-col items-center shadow-xl mb-6 text-white relative overflow-hidden"
+                >
+                  <div className="absolute top-0 inset-x-0 h-16 bg-white/10 blur-xl"></div>
+                  <span className="text-xs font-bold text-white/70 mb-2 uppercase tracking-widest z-10">
+                    Caretaker Code
                   </span>
-                  <span className="text-xs text-slate-400 font-medium">
-                    Requested 2 mins ago
-                  </span>
+                  <div className="font-mono text-5xl font-black text-white tracking-[0.1em] mb-4 z-10 drop-shadow-md">
+                    {pet.inviteCode || "------"}
+                  </div>
+                  <div className="flex items-center gap-4 bg-white/10 p-3 rounded-2xl border border-white/20 w-full z-10 backdrop-blur-sm">
+                    <div className="w-12 h-12 shrink-0 bg-white p-1 rounded-xl">
+                      <img
+                        src={qrCodeDataUrl || `/api/proxy-image?url=${encodeURIComponent(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`)}`}
+                        alt="QR Code"
+                        crossOrigin="anonymous"
+                        className="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-black text-white text-sm truncate">
+                        {pet.name}
+                      </p>
+                      <p className="text-xs text-white/80 truncate">
+                        Scan to open profile
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex gap-3 mb-6">
                   <button
-                    onClick={() => alert("Request accepted!")}
-                    className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center hover:bg-emerald-200 transition-colors active:scale-95"
+                    onClick={async () => {
+                      const el = document.getElementById("petShareCard");
+                      if (el) {
+                        try {
+                          const dataUrl = await toPng(el, { cacheBust: true, backgroundColor: "transparent", style: { margin: "0" } });
+                          const approved = localStorage.getItem("save_image_approved");
+                          if (!approved) {
+                            const proceed = window.confirm("Do you want to save this image? (We won't ask again)");
+                            if (!proceed) return;
+                            localStorage.setItem("save_image_approved", "true");
+                          }
+
+                          const link = document.createElement("a");
+                          link.download = `${pet.name}_inviteCode.png`;
+                          link.href = dataUrl;
+                          link.click();
+                          setShowShare(false);
+                        } catch (e) {}
+                      }
+                    }}
+                    className="flex-1 flex justify-center items-center gap-2 text-green-600 font-bold bg-green-50 py-3 rounded-xl text-sm transition-colors hover:bg-green-100 active:scale-95"
                   >
-                    <Check className="w-4 h-4" />
+                    <QrCode className="w-4 h-4" /> Save Card
                   </button>
                   <button
-                    onClick={() => alert("Request rejected!")}
-                    className="w-8 h-8 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center hover:bg-rose-200 transition-colors active:scale-95"
+                    onClick={async () => {
+                      const el = document.getElementById("petShareCard");
+                      if (el) {
+                        try {
+                          const blob = await toBlob(el, { cacheBust: true, backgroundColor: "transparent", style: { margin: "0" } });
+                          const approved = localStorage.getItem("share_pet_approved");
+                          if (!approved) {
+                            const proceed = window.confirm("Do you want to share this pet proxy card? (We won't ask again)");
+                            if (!proceed) return;
+                            localStorage.setItem("share_pet_approved", "true");
+                          }
+                          if (!blob) return;
+                          
+                          {
+                            if (!blob) return;
+                            const file = new File([blob], "invite.png", {
+                              type: blob.type,
+                            });
+                            if (
+                              navigator.canShare &&
+                              navigator.canShare({ files: [file] })
+                            ) {
+                              await navigator.share({
+                                title: `Collaborate on ${pet.name}!`,
+                                text: `Use my invite code to collaborate on ${pet.name}!`,
+                                files: [file],
+                              });
+                              setShowShare(false);
+                            } else {
+                              alert("Sharing not natively supported.");
+                              }
+                            }
+                        } catch (e) {}
+                      }
+                    }}
+                    className="flex-1 flex justify-center items-center gap-2 text-white font-bold bg-green-600 py-3 rounded-xl text-sm transition-colors hover:bg-green-700 active:scale-95"
                   >
-                    <X className="w-4 h-4" />
+                    <Share2 className="w-4 h-4" /> Share
                   </button>
                 </div>
-              </div>
+                </>
+                )}
+
+                {collabTab === "collaborators" && (
+                  <div className="flex flex-col gap-3 min-h-[250px] max-h-[300px] overflow-y-auto mb-6">
+                    {!(pet.caretakers?.length) && <p className="text-sm text-slate-500 text-center mt-6">No caretakers yet.</p>}
+                    {pet.caretakers?.map((uid: string) => {
+                      const c = pet.collaborators?.find((col: any) => col.uid === uid) || { uid, displayName: `Caretaker ${uid.substring(uid.length - 4)}`, email: `ID: ${uid.substring(0, 10)}...` };
+                      return (
+                      <div key={c.uid} className="flex items-center justify-between bg-slate-50 border border-slate-100 p-3 rounded-xl">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-sm text-slate-800">{c.displayName}</span>
+                          <span className="text-xs text-slate-500">{c.email}</span>
+                        </div>
+                        <button disabled={isUpdatingCollab} onClick={() => handleRemoveCollaborator(c)} className="w-8 h-8 flex items-center justify-center text-red-500 bg-red-50 hover:bg-red-100 rounded-full transition-colors"><X className="w-4 h-4" /></button>
+                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {collabTab === "requests" && (
+                  <div className="flex flex-col gap-3 min-h-[250px] max-h-[300px] overflow-y-auto mb-6">
+                    {!(pet.collaboratorRequests?.length) && <p className="text-sm text-slate-500 text-center mt-6">No pending requests.</p>}
+                    {pet.collaboratorRequests?.map((req: any) => (
+                      <div key={req.uid} className="flex flex-col gap-2 bg-indigo-50/50 border border-indigo-100 p-3 rounded-xl">
+                        <div className="flex flex-col">
+                          <span className="font-bold text-sm text-slate-800">{req.displayName}</span>
+                          <span className="text-xs text-slate-500">{req.email}</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button disabled={isUpdatingCollab} onClick={() => handleApproveRequest(req)} className="flex-1 bg-indigo-600 text-white font-bold text-xs py-2 rounded-lg hover:bg-indigo-700 transition">Approve</button>
+                          <button disabled={isUpdatingCollab} onClick={() => handleRejectRequest(req)} className="flex-1 bg-white border border-slate-200 text-slate-700 font-bold text-xs py-2 rounded-lg hover:bg-slate-50 transition">Reject</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-sm font-medium text-slate-500 mb-6 border-b border-slate-100 pb-4">
+                Only the primary owner can share the caretaker invite code
+                for this pet.
+              </p>
+            )}
+
+            
+          </div>
+        </div>
+      )}
+
+      {publicToggleConfirm && (
+        <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl flex flex-col gap-4 animate-in zoom-in-95">
+            <h3 className="text-xl font-black text-slate-800">
+              {publicToggleConfirm.nextStatus === "public" ? "Make Public?" : "Make Private?"}
+            </h3>
+            <p className="text-sm font-medium text-slate-600">
+              {publicToggleConfirm.nextStatus === "public" 
+                ? "Are you sure you want to make this pet profile public? It will be visible on the map to everyone."
+                : "Are you sure you want to make this pet profile private? It will be hidden from the public map."}
+            </p>
+            <div className="flex gap-3 mt-2">
+              <button
+                onClick={() => setPublicToggleConfirm(null)}
+                className="flex-1 py-3 text-sm font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-xl"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={executeTogglePublicStatus}
+                className={`flex-1 py-3 text-sm font-bold text-white rounded-xl shadow-lg ${
+                  publicToggleConfirm.nextStatus === "public" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-800 hover:bg-slate-900"
+                }`}
+              >
+                Confirm
+              </button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

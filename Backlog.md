@@ -1,3 +1,3 @@
-1. When user back to home it not on the current location but go back to default location
-2. When user wanted to co parenting with someone pet, when i try to submit the code it not connect and said the code error, 
-3. There no straykin/pets in the nearby area when there are already stray/public pet submission from other user.
+please make the first load like this
+when user already give permission for the first time do not asking again
+when opening the app it will go directly to the central location, if there still not in the current location make a loading screen which the logo bounce and give information like gathering the stray in your area, if already in current location and already load the nearby straykin the loading dissapear and see the map view

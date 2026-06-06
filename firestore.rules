@@ -32,5 +32,11 @@ service cloud.firestore {
       allow create: if true; 
       allow update: if true;
     }
+
+    match /check_ins/{checkInId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+    }
   }
 }

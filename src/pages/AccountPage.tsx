@@ -4,6 +4,7 @@ import { useLazyAuth } from "../hooks/useLazyAuth";
 import { useNavigate } from "react-router-dom";
 import { CustomIcon } from "../components/CustomIcon";
 import { AdBanner } from "../components/AdBanner";
+import { usePushNotifications } from "../hooks/usePushNotifications";
 import {
   ArrowLeft,
   User as UserIcon,
@@ -19,6 +20,7 @@ import {
   Menu,
   ExternalLink,
   MapPin,
+  Bell
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -76,6 +78,7 @@ export default function AccountPage() {
     logout,
     resendVerification,
   } = useLazyAuth();
+  const { permission, requestPermission } = usePushNotifications();
   const { cats, updateCatProfile } = useCatDatabase();
   const navigate = useNavigate();
 
@@ -104,9 +107,99 @@ export default function AccountPage() {
     };
   });
 
+  const [userSubmissions, setUserSubmissions] = useState<any[]>([]);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    setIsUploadingAvatar(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
+        try {
+          const res = await fetch("/api/upload-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageBase64: base64 }),
+          });
+          const data = await res.json();
+          if (data.success && data.url) {
+            const { updateProfile } = await import("firebase/auth");
+            await updateProfile(user, { photoURL: data.url });
+            window.location.reload();
+          } else {
+            alert("Failed to upload image.");
+            setIsUploadingAvatar(false);
+          }
+        } catch (err) {
+          console.error("Upload error", err);
+          alert("Error uploading image.");
+          setIsUploadingAvatar(false);
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (error) {
+      setIsUploadingAvatar(false);
+      console.error(error);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem("user_profile", JSON.stringify(profile));
   }, [profile]);
+
+  useEffect(() => {
+    if (user) {
+      const fetchUserData = async () => {
+        try {
+          const { collection, query, where, getDocs, or } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          
+          // Fetch Submissions
+          if (user.uid) {
+            const subQ = query(collection(db, 'strays'), where('submittedBy', '==', user.uid));
+            const subSnap = await getDocs(subQ);
+            const fetchedSubs = subSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setUserSubmissions(fetchedSubs);
+          }
+
+          // Fetch Pets
+          if (!user.isAnonymous) {
+            try {
+              const petQ1 = query(collection(db, 'pets'), where('ownerId', '==', user.uid));
+              const petQ2 = query(collection(db, 'pets'), where('caretakers', 'array-contains', user.uid));
+              
+              const [snap1, snap2] = await Promise.all([getDocs(petQ1), getDocs(petQ2)]);
+              
+              const petDocMap = new Map();
+              snap1.docs.forEach(doc => petDocMap.set(doc.id, { id: doc.id, ...doc.data() }));
+              snap2.docs.forEach(doc => petDocMap.set(doc.id, { id: doc.id, ...doc.data() }));
+              
+              const fetchedPets = Array.from(petDocMap.values()) as Pet[];
+              
+              if (fetchedPets.length > 0) {
+                setProfile(p => {
+                  const petMap = new Map();
+                  // Prefer fetched truth
+                  p.pets.forEach(pet => petMap.set(pet.id, pet));
+                  fetchedPets.forEach(pet => petMap.set(pet.id, pet));
+                  return { ...p, pets: Array.from(petMap.values()) };
+                });
+              }
+            } catch(e) {
+              console.error("Failed to fetch pets", e);
+            }
+          }
+        } catch(e) {
+          console.error("Failed to fetch user data", e);
+        }
+      };
+      fetchUserData();
+    }
+  }, [user]);
 
   const [newPet, setNewPet] = useState<{
     name: string;
@@ -149,6 +242,7 @@ export default function AccountPage() {
     51.505, -0.09,
   ]);
   const [mapSearchQuery, setMapSearchQuery] = useState("");
+  const [publicToggleConfirm, setPublicToggleConfirm] = useState<{petId: string, nextStatus: string} | null>(null);
 
   const handleMapSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,7 +335,7 @@ export default function AccountPage() {
       ...prev,
       pets: prev.pets.map((p) => {
         if (p.id === petId) {
-          newStatus = p.status === "lost" ? "private" : "lost";
+          newStatus = p.status === "lost" ? "public" : "lost";
           return { ...p, status: newStatus };
         }
         return p;
@@ -253,7 +347,20 @@ export default function AccountPage() {
         const { doc, updateDoc } = await import('firebase/firestore');
         const { db } = await import('../config/firebase');
         const petRef = doc(db, 'pets', petId);
-        await updateDoc(petRef, { status: newStatus });
+        
+        let updates: any = { status: newStatus };
+        const cachedPos = sessionStorage.getItem("strayapp_pos");
+        if (cachedPos) {
+          try {
+            const parsed = JSON.parse(cachedPos);
+            if (Array.isArray(parsed) && parsed.length === 2) {
+              updates.lat = parsed[0];
+              updates.lng = parsed[1];
+            }
+          } catch(e) {}
+        }
+        
+        await updateDoc(petRef, updates);
       } catch(e) {
         console.error("Failed to update lost mode on Firebase", e);
       }
@@ -261,6 +368,30 @@ export default function AccountPage() {
   };
 
   const togglePublicMode = async (petId: string) => {
+    let currentStatus = "";
+    if (petId === "NEW") {
+      currentStatus = newPet.status;
+    } else {
+      profile.pets.forEach(p => {
+         if (p.id === petId) currentStatus = p.status;
+      });
+    }
+    if (currentStatus === "lost") return;
+    
+    const nextStatus = currentStatus === "private" ? "public" : "private";
+    setPublicToggleConfirm({ petId, nextStatus });
+  };
+
+  const executeTogglePublicMode = async () => {
+    if (!publicToggleConfirm) return;
+    const { petId, nextStatus } = publicToggleConfirm;
+    setPublicToggleConfirm(null);
+
+    if (petId === "NEW") {
+      setNewPet(prev => ({ ...prev, status: nextStatus }));
+      return;
+    }
+
     let newStatus = "";
     let canChange = false;
     setProfile((prev) => ({
@@ -281,7 +412,20 @@ export default function AccountPage() {
         const { doc, updateDoc } = await import('firebase/firestore');
         const { db } = await import('../config/firebase');
         const petRef = doc(db, 'pets', petId);
-        await updateDoc(petRef, { status: newStatus });
+        
+        let updates: any = { status: newStatus };
+        const cachedPos = sessionStorage.getItem("strayapp_pos");
+        if (cachedPos) {
+          try {
+            const parsed = JSON.parse(cachedPos);
+            if (Array.isArray(parsed) && parsed.length === 2) {
+              updates.lat = parsed[0];
+              updates.lng = parsed[1];
+            }
+          } catch(e) {}
+        }
+        
+        await updateDoc(petRef, updates);
       } catch(e) {
         console.error("Failed to update public mode on Firebase", e);
       }
@@ -291,22 +435,58 @@ export default function AccountPage() {
   const handleAddPet = async () => {
     if (!newPet.name) return;
     const newId = `pet_${Date.now()}`;
+    const newInviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+    
+    let uploadedPhotoUrl = newPet.photoDataUrl;
+    if (uploadedPhotoUrl && uploadedPhotoUrl.startsWith("data:image")) {
+      try {
+        const res = await fetch("/api/upload-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ imageBase64: uploadedPhotoUrl })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          uploadedPhotoUrl = data.url;
+        }
+      } catch (e) {
+        console.error("Failed to upload pet image", e);
+      }
+    }
     
     // Optimistic UI update
     setProfile((prev) => ({
       ...prev,
-      pets: [...prev.pets, { ...newPet, id: newId }],
+      pets: [...prev.pets, { ...newPet, id: newId, inviteCode: newInviteCode, photoDataUrl: uploadedPhotoUrl, ownerId: user?.uid || 'anonymous' }],
     }));
     
     try {
       const { doc, setDoc } = await import('firebase/firestore');
       const { db } = await import('../config/firebase');
       
+      const cachedPos = sessionStorage.getItem("strayapp_pos");
+      let lat = newPet.lat || null;
+      let lng = newPet.lng || null;
+      if (!lat || !lng) {
+        if (cachedPos) {
+          try {
+            const parsed = JSON.parse(cachedPos);
+            if (Array.isArray(parsed) && parsed.length === 2) {
+              lat = parsed[0];
+              lng = parsed[1];
+            }
+          } catch(e) {}
+        }
+      }
+
       const petData = {
         ...newPet,
         id: newId,
+        inviteCode: newInviteCode,
         ownerId: user?.uid || 'anonymous',
         createdAt: Date.now(),
+        photoDataUrl: uploadedPhotoUrl,
+        ...(lat && lng ? { lat, lng } : {})
       };
       
       await setDoc(doc(db, "pets", newId), petData);
@@ -331,16 +511,37 @@ export default function AccountPage() {
   };
 
   const handleClaimPet = async () => {
-    if (!inviteCodeInput.trim() || !user || user.isAnonymous) return;
+    const code = inviteCodeInput.trim().toUpperCase();
+    if (!code || !user || user.isAnonymous) return;
 
     if (inviteLockoutUntil && Date.now() < inviteLockoutUntil) {
       alert("Too many failed attempts. Please try again later.");
       return;
     }
 
-    const cat = cats.find((c) => c.inviteCode === inviteCodeInput.trim());
+    let foundPet: any = null;
+    let isStray = false;
+
+    const cat = cats.find((c) => c.inviteCode && c.inviteCode.toUpperCase() === code);
     if (cat) {
-      if ((cat.caretakers || []).includes(user.uid)) {
+      foundPet = cat;
+      isStray = true;
+    } else {
+      try {
+        const { getDocs, query, collection, where } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        const q = query(collection(db, 'pets'), where('inviteCode', '==', code));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          foundPet = { id: snap.docs[0].id, ...snap.docs[0].data() };
+        }
+      } catch (err) {
+        console.error("Error finding pet by invite code", err);
+      }
+    }
+
+    if (foundPet) {
+      if ((foundPet.caretakers || []).includes(user.uid) || foundPet.ownerId === user.uid) {
         alert("You are already a caretaker for this pet.");
         return;
       }
@@ -349,13 +550,26 @@ export default function AccountPage() {
 
       // Simulate waiting for owner to accept
       setTimeout(async () => {
-        // We will just "accept" it after 3 seconds to mock the behaviour
-        const newCaretakers = [...(cat.caretakers || []), user.uid];
-        await updateCatProfile(cat.id, { caretakers: newCaretakers });
+        try {
+          const reqObj = { uid: user.uid, displayName: userSettings.displayName || user.email || "Unknown", email: user.email || "" };
+          const { doc, updateDoc, arrayUnion } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+
+          if (isStray) {
+            await updateCatProfile(foundPet.id, { collaboratorRequests: arrayUnion(reqObj) as any });
+          } else {
+            await updateDoc(doc(db, 'pets', foundPet.id), { collaboratorRequests: arrayUnion(reqObj) });
+          }
+          alert("Request sent successfully! Waiting for owner's approval.");
+        } catch(e) {
+          console.error("Error updating pet collaboratorRequests", e);
+          alert("Failed to send request.");
+        }
+        
         setClaimStatus("idle");
         setInviteCodeInput("");
         setAddMode("none");
-      }, 3000);
+      }, 1000);
     } else {
       const newAttempts = inviteAttempts + 1;
       setInviteAttempts(newAttempts);
@@ -429,20 +643,32 @@ export default function AccountPage() {
         </button>
 
         <div className="flex items-center gap-4">
-          <div className="relative">
-            {user?.photoURL ? (
+          <div className="relative group cursor-pointer">
+            <input
+              type="file"
+              accept="image/*"
+              onChange={handleAvatarChange}
+              disabled={isUploadingAvatar || !user || user.isAnonymous}
+              className="absolute inset-0 opacity-0 cursor-pointer z-20"
+              title="Change Profile Picture"
+            />
+            {isUploadingAvatar ? (
+              <div className="w-16 h-16 rounded-full bg-slate-200 animate-pulse border-2 border-white flex items-center justify-center">
+                <span className="text-[10px] text-slate-500 font-bold">...</span>
+              </div>
+            ) : user?.photoURL ? (
               <img
                 src={user.photoURL}
                 alt="Avatar"
-                className="w-16 h-16 rounded-full shadow-md object-cover border-2 border-white"
+                className="w-16 h-16 rounded-full shadow-md object-cover border-2 border-white group-hover:opacity-80 transition-opacity"
               />
             ) : (
-              <div className="w-16 h-16 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shadow-md border-2 border-white">
+              <div className="w-16 h-16 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shadow-md border-2 border-white group-hover:bg-orange-200 transition-colors">
                 <UserIcon className="w-8 h-8" />
               </div>
             )}
-            {!user?.isAnonymous && (
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center shadow-sm">
+            {user && !user.isAnonymous && !isUploadingAvatar && (
+              <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center shadow-sm z-30 pointer-events-none">
                 <Award className="w-3 h-3 text-white" />
               </div>
             )}
@@ -450,11 +676,11 @@ export default function AccountPage() {
           <div className="flex-1">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-black text-slate-900">
-                {user?.isAnonymous
+                {!user || user.isAnonymous
                   ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
                   : user?.displayName || "App User"}
               </h2>
-              {!user?.isAnonymous && (
+              {user && !user.isAnonymous && (
                 <button
                   onClick={() => setActiveTab("account")}
                   className="p-1.5 text-slate-400 hover:text-slate-600 bg-slate-50 border border-slate-100 rounded-full"
@@ -468,7 +694,7 @@ export default function AccountPage() {
               )}
             </div>
 
-            {user?.isAnonymous ? (
+            {!user || user.isAnonymous ? (
               <p className="text-sm font-bold text-slate-500 mb-2">
                 Unregistered
               </p>
@@ -478,13 +704,13 @@ export default function AccountPage() {
               </p>
             )}
 
-            {!user?.isAnonymous && user && !user.emailVerified && (
+            {user && !user.isAnonymous && user && !user.emailVerified && (
               <div className="mt-2 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 flex items-center justify-between py-1 rounded-md border border-amber-200">
                 <span>Email not verified</span>
               </div>
             )}
 
-            {user?.isAnonymous && (
+            {!user || user.isAnonymous && (
               <button
                 onClick={() => navigate("/login")}
                 className="bg-slate-900 text-white text-xs font-bold px-4 py-2 rounded-full hover:bg-slate-800 transition-all mt-2 cursor-pointer"
@@ -530,8 +756,8 @@ export default function AccountPage() {
         {/* !user?.isAnonymous && ( ... ) */}
       </div>
 
-      <div className="px-4 pt-4">
-        <AdBanner format="banner" />
+      <div className="px-4 pt-4 flex justify-center">
+        <AdBanner format="rectangle" />
       </div>
 
       <div className="p-4 space-y-6">
@@ -554,9 +780,18 @@ export default function AccountPage() {
               </button>
             </div>
 
-            {subTab === "submissions" && (
+            {subTab === "submissions" && (() => {
+              const localUserCats = cats.filter((c) => c.submittedBy === (user?.uid || "anonymous"));
+              const allSubs = [...userSubmissions];
+              localUserCats.forEach(lc => {
+                if (!allSubs.find(s => s.id === lc.id)) {
+                  allSubs.push(lc);
+                }
+              });
+
+              return (
               <>
-                {user?.isAnonymous && (
+                {(!user || user.isAnonymous) && (
                   <div className="mb-4 bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-start gap-3">
                     <ShieldAlert className="w-5 h-5 text-orange-500 shrink-0 mt-0.5" />
                     <div>
@@ -577,19 +812,17 @@ export default function AccountPage() {
                   </div>
                 )}
 
-                {cats.filter((c) => c.submittedBy === user?.uid).length ===
-                0 ? (
+                {allSubs.length === 0 ? (
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 text-center text-slate-500 font-medium text-sm">
                     No reports history.
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {cats
-                      .filter((c) => c.submittedBy === user?.uid)
+                    {allSubs
                       .map((cat) => (
                         <button
                           key={cat.id}
-                          onClick={() => navigate(`/cat/${cat.id}`)}
+                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
                           className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
                         >
                           <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
@@ -647,7 +880,8 @@ export default function AccountPage() {
                   </div>
                 )}
               </>
-            )}
+              );
+            })()}
 
             {subTab === "favorites" && (
               <>
@@ -662,7 +896,7 @@ export default function AccountPage() {
                       .map((cat) => (
                         <button
                           key={cat.id}
-                          onClick={() => navigate(`/cat/${cat.id}`)}
+                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
                           className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
                         >
                           <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
@@ -715,7 +949,7 @@ export default function AccountPage() {
                 Profile Settings
               </h3>
 
-              {user?.isAnonymous ? (
+              {!user || user.isAnonymous ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
                   <p className="text-sm font-bold text-slate-700 mb-2">
                     Sign in to customize your profile
@@ -762,6 +996,27 @@ export default function AccountPage() {
                       </button>
                     </div>
                   )}
+                  
+                  {permission !== 'granted' && (
+                    <div className="bg-orange-50 rounded-2xl p-4 border border-orange-100 flex items-center justify-between mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">
+                          <Bell className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">Push Notifications</p>
+                          <p className="text-xs text-slate-600">Get notified about new strays.</p>
+                        </div>
+                      </div>
+                      <button 
+                        onClick={requestPermission}
+                        className="bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-white font-bold text-xs px-4 py-2 rounded-xl shadow-sm"
+                      >
+                        Enable
+                      </button>
+                    </div>
+                  )}
+
                   <div>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">
                       Display Name
@@ -845,7 +1100,7 @@ export default function AccountPage() {
                 Your Neighborhood Caretaker stats
               </p>
 
-              {user?.isAnonymous ? (
+              {!user || user.isAnonymous ? (
                 <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
                   <div className="w-12 h-12 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-3">
                     <Lock className="w-5 h-5" />
@@ -982,7 +1237,7 @@ export default function AccountPage() {
             </div>
             */}
 
-            {!user?.isAnonymous && (
+            {user && !user.isAnonymous && (
               <button
                 onClick={() => {
                   logout();
@@ -1018,7 +1273,7 @@ export default function AccountPage() {
             </p>
 
             <div className="space-y-4">
-              {user?.isAnonymous ? (
+              {!user || user.isAnonymous ? (
                 <div className="text-center py-8 bg-slate-50 border border-slate-200 rounded-3xl">
                   <div className="w-16 h-16 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-4">
                     <Lock className="w-8 h-8" />
@@ -1053,9 +1308,7 @@ export default function AccountPage() {
                   <button
                     onClick={() => setAddMode("adoption")}
                     className="py-3 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl transition-colors shadow-lg"
-                  >
-                    Adoption
-                  </button>
+                  >Caretaker Hub</button>
                   <button
                     onClick={() => setAddMode("manual")}
                     className="py-3 px-6 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-2xl transition-colors shadow-sm border border-slate-200"
@@ -1073,7 +1326,8 @@ export default function AccountPage() {
                         className="p-5 rounded-3xl border-2 transition-colors flex flex-col gap-4 border-indigo-100 bg-indigo-50/30"
                       >
                         <button
-                          onClick={() => navigate(`/cat/${cat.id}`)}
+                          key={cat.id}
+                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
                           className="flex gap-4 items-center text-left hover:opacity-80 transition-opacity"
                         >
                           <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-3xl shrink-0 overflow-hidden shadow-inner border-4 border-white">
@@ -1108,7 +1362,7 @@ export default function AccountPage() {
                       className={`p-5 rounded-3xl border-2 transition-colors flex flex-col gap-4 ${pet.status === "lost" ? "border-red-500 bg-red-50" : "border-indigo-100 bg-indigo-50/30"}`}
                     >
                       <button
-                        onClick={() => navigate(`/pet/${pet.id}`)}
+                        onClick={() => navigate(`/pet/${pet.id}`, { state: { pet } })}
                         className="flex gap-4 items-center text-left hover:opacity-80 transition-opacity"
                       >
                         <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-3xl shrink-0 overflow-hidden shadow-inner border-4 border-white">
@@ -1143,7 +1397,7 @@ export default function AccountPage() {
                       <div className="flex items-center justify-between pt-4 border-t border-slate-200 border-opacity-50 mt-4">
                         <div className="flex flex-col">
                           <span className="text-sm font-bold text-slate-700">
-                            {pet.status === "public"
+                            {pet.status === "public" || pet.status === "lost"
                               ? "Public visible"
                               : "Private"}
                           </span>
@@ -1154,10 +1408,10 @@ export default function AccountPage() {
                         <button
                           onClick={() => togglePublicMode(pet.id)}
                           disabled={pet.status === "lost"}
-                          className={`w-14 h-8 rounded-full p-1 relative transition-colors duration-300 ease-in-out focus:outline-none ${pet.status === "public" ? "bg-indigo-500" : "bg-slate-300"} ${pet.status === "lost" ? "opacity-50" : ""}`}
+                          className={`w-14 h-8 rounded-full p-1 relative transition-colors duration-300 ease-in-out focus:outline-none ${pet.status === "public" || pet.status === "lost" ? "bg-indigo-500" : "bg-slate-300"} ${pet.status === "lost" ? "opacity-50" : ""}`}
                         >
                           <div
-                            className={`w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-300 ease-in-out flex items-center justify-center ${pet.status === "public" ? "translate-x-6" : "translate-x-0"}`}
+                            className={`w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-300 ease-in-out flex items-center justify-center ${pet.status === "public" || pet.status === "lost" ? "translate-x-6" : "translate-x-0"}`}
                           ></div>
                         </button>
                       </div>
@@ -1189,7 +1443,7 @@ export default function AccountPage() {
                       {pet.status === "lost" && (
                         <div className="bg-red-100 text-red-800 text-[10px] font-bold p-2.5 rounded-xl uppercase tracking-wide">
                           SOS Mode Active: Public distress pin broadcasted at:{" "}
-                          {pet.lastLocation}
+                          {pet.lastLocation?.length > 18 ? pet.lastLocation.substring(0, 18) + "..." : pet.lastLocation}
                         </div>
                       )}
                     </div>
@@ -1200,7 +1454,7 @@ export default function AccountPage() {
                         onClick={() => setAddMode("adoption")}
                         className="w-full flex items-center justify-center gap-2 py-4 bg-indigo-50 border border-indigo-200 border-dashed rounded-3xl font-bold text-indigo-600 hover:bg-indigo-100 transition-colors"
                       >
-                        <Award className="w-5 h-5" /> Adoption
+                        <Award className="w-5 h-5" /> Caretaker Hub
                       </button>
                       <button
                         onClick={() => setAddMode("manual")}
@@ -1409,13 +1663,7 @@ export default function AccountPage() {
                         Make it public
                       </span>
                       <button
-                        onClick={() =>
-                          setNewPet({
-                            ...newPet,
-                            status:
-                              newPet.status === "public" ? "private" : "public",
-                          })
-                        }
+                        onClick={() => togglePublicMode("NEW")}
                         className={`w-12 h-6 rounded-full p-1 relative transition-colors duration-300 ease-in-out focus:outline-none ${newPet.status === "public" ? "bg-indigo-500" : "bg-slate-300"}`}
                       >
                         <div
@@ -1517,17 +1765,30 @@ export default function AccountPage() {
                       </div>
                       <div className="p-6 pb-12 bg-white flex flex-col gap-3 shadow-[0_-8px_30px_rgb(0,0,0,0.1)] z-10 pointer-events-auto">
                         <button
-                          onClick={(e) => {
+                          onClick={async (e) => {
                             e.preventDefault();
+                            setIsLocating(true);
+                            let locationName = `${mapPickerCenter[0].toFixed(4)}, ${mapPickerCenter[1].toFixed(4)}`;
+                            try {
+                              const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${mapPickerCenter[0]}&lon=${mapPickerCenter[1]}&format=json`);
+                              const data = await res.json();
+                              if (data && data.display_name) {
+                                locationName = data.display_name;
+                              }
+                            } catch(e) {}
+                            
                             setNewPet((prev) => ({
                               ...prev,
-                              lastLocation: `${mapPickerCenter[0].toFixed(4)}, ${mapPickerCenter[1].toFixed(4)}`,
+                              lastLocation: locationName,
+                              lat: mapPickerCenter[0],
+                              lng: mapPickerCenter[1],
                             }));
+                            setIsLocating(false);
                             setIsMapPickerOpen(false);
                           }}
                           className="w-full bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl hover:bg-indigo-700 transition-transform active:scale-95 text-lg"
                         >
-                          Set Pet Location
+                          {isLocating ? "Getting Address..." : "Set Pet Location"}
                         </button>
                       </div>
                     </div>
@@ -1547,6 +1808,37 @@ export default function AccountPage() {
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {publicToggleConfirm && (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl flex flex-col gap-4 animate-in zoom-in-95">
+              <h3 className="text-xl font-black text-slate-800">
+                {publicToggleConfirm.nextStatus === "public" ? "Make Public?" : "Make Private?"}
+              </h3>
+              <p className="text-sm font-medium text-slate-600">
+                {publicToggleConfirm.nextStatus === "public" 
+                  ? "Are you sure you want to make this pet profile public? It will be visible on the map to everyone."
+                  : "Are you sure you want to make this pet profile private? It will be hidden from the public map."}
+              </p>
+              <div className="flex gap-3 mt-2">
+                <button
+                  onClick={() => setPublicToggleConfirm(null)}
+                  className="flex-1 py-3 text-sm font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={executeTogglePublicMode}
+                  className={`flex-1 py-3 text-sm font-bold text-white rounded-xl shadow-lg ${
+                    publicToggleConfirm.nextStatus === "public" ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-800 hover:bg-slate-900"
+                  }`}
+                >
+                  Confirm
+                </button>
+              </div>
             </div>
           </div>
         )}

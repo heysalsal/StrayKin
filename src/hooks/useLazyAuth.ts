@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   signInAnonymously, 
   GoogleAuthProvider, 
@@ -24,35 +24,33 @@ export function useLazyAuth() {
   useEffect(() => {
     // Listen to auth state
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        setLoading(false);
-      } else {
-        // Try to sign in anonymously if no user is found
-        try {
-          await setPersistence(auth, browserLocalPersistence);
-          const cred = await signInAnonymously(auth);
-          setUser(cred.user);
-        } catch (err: any) {
-          if (err?.code === 'auth/admin-restricted-operation' || err?.message?.includes('admin-restricted-operation')) {
-            console.log(
-              "ℹ️ Firebase Anonymous Sign-In is currently disabled in your Firebase Console.\n" +
-              "To enable real persistent anonymous check-ins, go to:\n" +
-              "👉 Firebase Console > Authentication > Sign-in method > Enable 'Anonymous' provider.\n" +
-              "Falling back to local session-based user authentication."
-            );
-          } else {
-            console.error("Anonymous auth failed", err);
-          }
-          setUser(null);
-          setError(null);
-        } finally {
-          setLoading(false);
-        }
-      }
+      setUser(currentUser);
+      setLoading(false);
     });
 
     return () => unsubscribe();
+  }, []);
+
+  const signInAnonymouslyIfNeeded = useCallback(async () => {
+    if (auth.currentUser) return auth.currentUser;
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+      const cred = await signInAnonymously(auth);
+      setUser(cred.user);
+      return cred.user;
+    } catch (err: any) {
+      if (err?.code === 'auth/admin-restricted-operation' || err?.message?.includes('admin-restricted-operation')) {
+        console.log(
+          "ℹ️ Firebase Anonymous Sign-In is currently disabled in your Firebase Console.\n" +
+          "To enable real persistent anonymous check-ins, go to:\n" +
+          "👉 Firebase Console > Authentication > Sign-in method > Enable 'Anonymous' provider.\n" +
+          "Falling back to local session-based user authentication."
+        );
+      } else {
+        console.error("Anonymous auth failed", err);
+      }
+      return null;
+    }
   }, []);
 
   const logout = async () => {
@@ -128,6 +126,6 @@ export function useLazyAuth() {
     }
   };
 
-  return { user, loading, error, upgradeToGoogleAccount, registerWithEmail, loginWithEmail, logout, resendVerification, resetPassword };
+  return { user, loading, error, upgradeToGoogleAccount, registerWithEmail, loginWithEmail, logout, resendVerification, resetPassword, signInAnonymouslyIfNeeded };
 }
 
