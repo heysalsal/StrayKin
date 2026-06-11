@@ -20,6 +20,7 @@ import {
   X,
   User,
   RefreshCcw,
+  Trophy,
 } from "lucide-react";
 import { mapConfig } from "../config/map";
 import { CatRecord } from "../types";
@@ -120,7 +121,6 @@ function RecenterAction({
 }
 
 import { useNavigate } from "react-router-dom";
-import Webcam from "react-webcam";
 import { InterstitialAd } from "../config/InterstitialAd";
 import { distanceBetween } from "geofire-common";
 
@@ -161,9 +161,8 @@ export default function MapView() {
 
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [reportStep, setReportStep] = useState<"camera" | "form">("camera");
+  const [reportStep, setReportStep] = useState<"camera" | "form">("form");
   const [photoAttempts, setPhotoAttempts] = useState(0);
-  const webcamRef = useRef<Webcam>(null);
   const [nameInput, setNameInput] = useState("");
   const [animalTypeInput, setAnimalTypeInput] = useState<
     "Cat" | "Dog" | "Other"
@@ -179,6 +178,7 @@ export default function MapView() {
   const [addToGallery, setAddToGallery] = useState(true);
 
   const [isShareOpen, setIsShareOpen] = useState(false);
+  const [earnedTitle, setEarnedTitle] = useState("");
   const [shareImgSrc, setShareImgSrc] = useState<string | undefined>();
   const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -186,6 +186,7 @@ export default function MapView() {
   const {
     cats,
     logNewSighting,
+    addCheckInLog,
     updateCatSighting,
     seedMockArea,
     fetchNearbyCats,
@@ -196,7 +197,7 @@ export default function MapView() {
 
   useEffect(() => {
     if (isShareOpen) {
-      const src = photoDataUrl || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.imageUrl) || "";
+      const src = photoDataUrl || (selectedCatId ? cats.find((c) => c.id === selectedCatId)?.imageUrl : undefined);
       if (src && src.startsWith("http")) {
         fetch(`/api/proxy-image?url=${encodeURIComponent(src)}`)
           .then(res => res.blob())
@@ -205,8 +206,10 @@ export default function MapView() {
             reader.onloadend = () => setShareImgSrc(reader.result as string);
             reader.readAsDataURL(blob);
           }).catch(() => setShareImgSrc(src));
-      } else {
+      } else if (src) {
         setShareImgSrc(src);
+      } else {
+        setShareImgSrc(undefined);
       }
     }
   }, [isShareOpen, photoDataUrl, selectedCatId]);
@@ -392,15 +395,6 @@ export default function MapView() {
     }
   };
 
-  const captureWebcam = useCallback(() => {
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (imageSrc) {
-      setPhotoDataUrl(imageSrc);
-      setIsCameraActive(false);
-      setReportStep("form");
-    }
-  }, [webcamRef]);
-
   const handleTagKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.code === "Space" || e.code === "Enter") {
       e.preventDefault();
@@ -474,6 +468,61 @@ export default function MapView() {
       imageBase64: photoDataUrl,
     };
 
+    const processGamificationRewards = () => {
+      let titleToAward = "";
+      const profileStr = localStorage.getItem("user_profile");
+      if (profileStr) {
+        try {
+          const profile = JSON.parse(profileStr);
+          if (!profile.gamification) profile.gamification = { total_xp:0, stray_submissions:0, check_ins:0 };
+          if (!profile.unlocked_badges) profile.unlocked_badges = [];
+          
+          if (selectedCatId) {
+             profile.gamification.check_ins = (profile.gamification.check_ins || 0) + 1;
+             profile.gamification.total_xp = (profile.gamification.total_xp || 0) + 20;
+
+             if (profile.gamification.check_ins === 1 && !profile.unlocked_badges.includes("good_samaritan")) {
+                 profile.unlocked_badges.push("good_samaritan");
+                 titleToAward = "Good Samaritan";
+             } else if (profile.gamification.check_ins === 10 && !profile.unlocked_badges.includes("reliable_feeder")) {
+                 profile.unlocked_badges.push("reliable_feeder");
+                 titleToAward = "Reliable Feeder";
+             } else if (profile.gamification.check_ins === 50 && !profile.unlocked_badges.includes("neighborhood_guardian")) {
+                 profile.unlocked_badges.push("neighborhood_guardian");
+                 titleToAward = "Neighborhood Guardian";
+             }
+          } else {
+             profile.gamification.stray_submissions = (profile.gamification.stray_submissions || 0) + 1;
+             profile.gamification.total_xp = (profile.gamification.total_xp || 0) + 50;
+          }
+          
+          if (profile.gamification.stray_submissions === 1 && !profile.unlocked_badges.includes("pawrent")) {
+             profile.unlocked_badges.push("pawrent");
+             titleToAward = "Pawrent";
+          } else if (profile.gamification.stray_submissions === 5 && !profile.unlocked_badges.includes("stray_savior")) {
+             profile.unlocked_badges.push("stray_savior");
+             titleToAward = "Stray Savior";
+          } else if (profile.gamification.stray_submissions === 10 && !profile.unlocked_badges.includes("cat_whisperer")) {
+             profile.unlocked_badges.push("cat_whisperer");
+             titleToAward = "Cat Whisperer";
+          }
+
+          if (titleToAward) {
+             profile.active_title = titleToAward;
+          }
+
+          localStorage.setItem("user_profile", JSON.stringify(profile));
+        } catch (e) {}
+      }
+      
+      setIsModalOpen(false);
+      if (titleToAward) {
+         setEarnedTitle(titleToAward);
+      } else {
+         setIsShareOpen(true);
+      }
+    };
+
     try {
       const submissionId = `sighting_${Date.now()}`;
       const reqBody = {
@@ -483,17 +532,13 @@ export default function MapView() {
         imageBase64: photoDataUrl,
       };
 
-      await fetch("/api/submit-for-review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reqBody),
-      });
-      alert("Sighting submitted and is under review!");
-
       // Save locally to show in list as under review (don't save huge base64 string to firestore)
       if (selectedCatId) {
-        await updateCatSighting(selectedCatId, {
-          ...details,
+        await addCheckInLog({
+          catId: selectedCatId,
+          wasFed: details.wasFed,
+          healthStatus: details.notes || "Good",
+          geo_point: null,
           photoDataUrl: null, // Defer image save to avoid Firestore limits until approved
           status: "under_review",
           submissionId,
@@ -515,18 +560,29 @@ export default function MapView() {
         );
         if (res.status === "created") {
           setSelectedCatId(res.id);
+          reqBody.details.catId = res.id;
         }
       }
 
-      setIsModalOpen(false);
-      setIsShareOpen(true);
+      fetch("/api/submit-for-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(reqBody),
+      }).catch(err => console.error("Background review failed", err));
+      
+      processGamificationRewards();
     } catch (err) {
       console.error("Failed to submit:", err);
       // Offline fallback
       if (selectedCatId) {
-        await updateCatSighting(selectedCatId, {
-          ...details,
+        await addCheckInLog({
+          catId: selectedCatId,
+          wasFed: details.wasFed,
+          healthStatus: details.notes || "Good",
+          geo_point: null,
           photoDataUrl: null,
+          status: "approved",
+          submittedBy: user?.uid,
         });
       } else {
         const res = await logNewSighting(
@@ -541,8 +597,7 @@ export default function MapView() {
       alert(
         "Submitted (offline preview mode). Image stripped due to offline fallback size limits.",
       );
-      setIsModalOpen(false);
-      setIsShareOpen(true);
+      processGamificationRewards();
     }
 
     setIsSubmitting(false);
@@ -843,52 +898,8 @@ export default function MapView() {
             }}
           ></div>
 
-          {modalStep === "form" && reportStep === "camera" ? (
-            <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center animate-in zoom-in-95">
-              {/* @ts-ignore */}
-              <Webcam
-                audio={false}
-                ref={webcamRef}
-                screenshotFormat="image/jpeg"
-                videoConstraints={{ facingMode: "environment" }}
-                className="absolute inset-0 w-full h-full object-cover"
-              />
-
-              {/* Header */}
-              <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
-                <h2 className="text-white font-black text-xl tracking-tight">
-                  Focus on Straykin
-                </h2>
-                <button
-                  onClick={() => {
-                    setIsModalOpen(false);
-                    setDuplicates([]);
-                  }}
-                  className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-white backdrop-blur"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Capture button */}
-              <div className="absolute bottom-0 inset-x-0 p-8 flex justify-center items-end bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (!isSubmitting) captureWebcam();
-                  }}
-                  disabled={isSubmitting}
-                  className={`w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-2xl transition-transform border-[6px] border-orange-500/50 ${isSubmitting ? "opacity-50" : "active:scale-95"}`}
-                >
-                  {isSubmitting && (
-                    <div className="w-6 h-6 border-4 border-slate-800 border-r-transparent rounded-full animate-spin"></div>
-                  )}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="relative w-full max-w-[400px] bg-white rounded-[3rem] p-8 shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] border border-slate-100 z-50 max-h-[90vh] overflow-y-auto">
-              {modalStep === "scan" ? (
+          <div className="relative w-full max-w-[400px] bg-white rounded-[3rem] p-8 shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] border border-slate-100 z-50 max-h-[90vh] overflow-y-auto">
+            {modalStep === "scan" ? (
                 <>
                   <div className="flex justify-between items-start mb-6">
                     <div>
@@ -1020,6 +1031,7 @@ export default function MapView() {
                       onClick={() => {
                         setSelectedCatId(null);
                         setModalStep("form");
+                        setTimeout(() => document.getElementById('native-camera-input-map')?.click(), 100);
                       }}
                       className={`w-full py-4 rounded-2xl font-bold transition-colors flex items-center justify-center gap-2 ${displayItems.length > 0 && currentIdx < displayItems.length ? "border border-slate-200 text-slate-600 hover:bg-slate-50" : "bg-orange-500 text-white shadow-lg shadow-orange-200 hover:bg-orange-600"}`}
                     >
@@ -1101,18 +1113,17 @@ export default function MapView() {
                           <button
                             onClick={(e) => {
                               e.preventDefault();
-                              setPhotoDataUrl(null);
-                              setReportStep("camera");
+                              document.getElementById('native-camera-input-map')?.click();
                             }}
-                            className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs font-bold px-3 py-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs font-bold px-3 py-1.5 rounded-full z-10 transition-opacity"
                           >
                             Retake
                           </button>
                         </>
                       ) : (
                         <button
-                          onClick={() => setReportStep("camera")}
-                          className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-orange-500 hover:bg-slate-50 transition-colors"
+                          onClick={() => document.getElementById('native-camera-input-map')?.click()}
+                          className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-orange-500 hover:bg-slate-50 transition-colors relative z-10"
                         >
                           <div className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center">
                             <Plus className="w-5 h-5" />
@@ -1120,6 +1131,14 @@ export default function MapView() {
                           <span className="text-sm font-bold">Open Camera</span>
                         </button>
                       )}
+                      <input
+                        id="native-camera-input-map"
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={handlePhotoCapture}
+                      />
                     </div>
 
                     {photoDataUrl && selectedCatId && (
@@ -1173,7 +1192,7 @@ export default function MapView() {
                                 /[^A-Za-z]/g,
                                 "",
                               );
-                              if (val.length <= 8) setNameInput(val);
+                              if (val.length <= 12) setNameInput(val);
                             }}
                             placeholder="What should we call them?"
                             className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-sm font-medium outline-none focus:border-orange-400 focus:bg-white transition-colors"
@@ -1309,11 +1328,36 @@ export default function MapView() {
                 </>
               )}
             </div>
-          )}
         </div>
       )}
 
       {/* Share Modal */}
+      {earnedTitle && (
+        <div className="fixed inset-0 z-[200] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl flex flex-col items-center gap-4 animate-in zoom-in-95">
+            <div className="w-20 h-20 bg-indigo-100 text-indigo-500 rounded-full flex items-center justify-center mb-4">
+              <Trophy className="w-10 h-10" />
+            </div>
+            <h3 className="text-2xl font-black text-slate-800 text-center uppercase tracking-wide">
+              Congratulations!
+            </h3>
+            <p className="text-sm font-bold text-slate-500 text-center mb-4 leading-relaxed">
+              You earned a new title:<br />
+              <span className="text-xl text-indigo-600 block mt-2">{earnedTitle}</span>
+            </p>
+            <button
+              onClick={() => {
+                setEarnedTitle("");
+                setIsShareOpen(true);
+              }}
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-600/30 hover:bg-indigo-700"
+            >
+              Awesome!
+            </button>
+          </div>
+        </div>
+      )}
+
       {isShareOpen && (
         <div className="fixed inset-0 z-[70] bg-black text-white flex flex-col justify-center items-center px-4 py-8">
           <div className="w-full max-w-sm flex justify-between items-center mb-6">
@@ -1343,11 +1387,13 @@ export default function MapView() {
             className="w-full max-w-sm aspect-[9/16] bg-slate-100 rounded-[2.5rem] overflow-hidden relative shadow-2xl flex flex-col"
           >
             <div className="w-full h-full absolute inset-0">
-              <img
-                src={shareImgSrc || ""}
-                className="w-full h-[65%] object-cover"
-                crossOrigin={shareImgSrc?.startsWith("http") ? "anonymous" : undefined}
-              />
+              {shareImgSrc && (
+                <img
+                  src={shareImgSrc}
+                  className="w-full h-[65%] object-cover"
+                  crossOrigin={shareImgSrc.startsWith("http") ? "anonymous" : undefined}
+                />
+              )}
             </div>
             <div className="w-full h-[45%] absolute bottom-0 left-0">
               <img src="/card.png" className="w-full h-full object-fill absolute inset-0 z-10" crossOrigin="anonymous" />
@@ -1368,12 +1414,23 @@ export default function MapView() {
                     </div>
                     <p className="text-sm font-medium text-white/90">
                       Has been fed by{" "}
-                      {userSettings.isAnonymous
-                        ? userSettings.displayName
-                          ? userSettings.displayName.slice(0, 2) +
-                            "*".repeat(userSettings.displayName.length - 2)
-                          : "Anonymous"
-                        : userSettings.displayName || "A Kind Soul"}
+                      {(() => {
+                        let title = "";
+                        const profileStr = localStorage.getItem("user_profile");
+                        if (profileStr) {
+                          try {
+                              const p = JSON.parse(profileStr);
+                              if (p.active_title) title = `(${p.active_title}) `;
+                          } catch(e) {}
+                        }
+                        const name = userSettings.isAnonymous
+                          ? userSettings.displayName
+                            ? userSettings.displayName.slice(0, 2) +
+                              "*".repeat(userSettings.displayName.length - 2)
+                            : "Anonymous"
+                          : userSettings.displayName || "A Kind Soul";
+                        return <>{title}{name}</>;
+                      })()}
                     </p>
                   </div>
                   <div className="w-16 h-16 bg-white rounded-xl shadow-lg shrink-0 overflow-hidden">

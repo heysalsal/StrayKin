@@ -29,7 +29,8 @@ export default function CatProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
-  const { cats, updateCatSighting, updateCatProfile, addCheckInLog } = useCatDatabase();
+  const { cats, updateCatSighting, updateCatProfile, addCheckInLog } =
+    useCatDatabase();
   const { user, loading, upgradeToGoogleAccount } = useLazyAuth();
 
   const [cat, setCat] = useState<CatRecord | null>(location.state?.cat || null);
@@ -65,7 +66,7 @@ export default function CatProfile() {
     }
   }, [user, loading]);
 
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(true);
   const [checkInsHistory, setCheckInsHistory] = useState<any[]>([]);
 
   useEffect(() => {
@@ -74,31 +75,40 @@ export default function CatProfile() {
       let unsubscribe: () => void = () => {};
       const loadHistory = async () => {
         try {
-          const { collection, query, where, onSnapshot, orderBy, limit } = await import("firebase/firestore");
+          const { collection, query, where, onSnapshot } =
+            await import("firebase/firestore");
           const { db } = await import("../config/firebase");
           const q = query(
             collection(db, "check_ins"),
             where("catId", "==", cat.id),
-            orderBy("timestamp", "desc"),
-            limit(10)
           );
           unsubscribe = onSnapshot(q, (snap) => {
             if (!isSubscribed) return;
-            const realHistory = snap.docs.map(d => ({
+            const realHistory = snap.docs.map((d) => ({
               id: d.id,
-              time: d.data().timestamp?.seconds ? d.data().timestamp.seconds * 1000 : Date.now(),
+              time: d.data().timestamp?.seconds
+                ? d.data().timestamp.seconds * 1000
+                : Date.now(),
               fed: d.data().wasFed,
               health: d.data().healthStatus || "Healthy",
               notes: d.data().notes || "",
               user: "Community Member",
-              status: d.data().status
+              status: d.data().status,
             }));
-            
-            const h = [...realHistory];
+
+            realHistory.sort((a, b) => b.time - a.time);
+            let h = [...realHistory];
+            // limit to only 5
+            h = h.slice(0, 5);
+
             const now = Date.now();
             const hr = 3600000;
             // We use the last_check_in as the first item if it exists and we don't have real logs
-            if (realHistory.length === 0 && cat.last_check_in && cat.last_check_in.timestamp) {
+            if (
+              realHistory.length === 0 &&
+              cat.last_check_in &&
+              cat.last_check_in.timestamp
+            ) {
               const ts = (cat.last_check_in.timestamp as any)?.seconds
                 ? (cat.last_check_in.timestamp as any).seconds * 1000
                 : now;
@@ -111,12 +121,13 @@ export default function CatProfile() {
                 user: user?.isAnonymous
                   ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
                   : user?.displayName || "App User",
-                status: "approved"
+                status: "approved",
               });
             }
-            // generate some old data placeholders? 
+            // generate some old data placeholders?
             if (h.length < 5) {
-              for (let i = 1; i <= 4; i++) {
+              const need = 5 - h.length;
+              for (let i = 1; i <= need; i++) {
                 h.push({
                   id: `h${i}`,
                   time: now - i * 24 * hr - Math.random() * hr,
@@ -124,10 +135,12 @@ export default function CatProfile() {
                   health: Math.random() > 0.8 ? "Needs Attention" : "Healthy",
                   notes: "",
                   user: Math.random() > 0.5 ? "Anonymous" : "Caretaker",
-                  status: "approved"
+                  status: "approved",
                 });
               }
             }
+
+            h.sort((a, b) => b.time - a.time);
             setCheckInsHistory(h);
           });
         } catch (err) {
@@ -156,30 +169,11 @@ export default function CatProfile() {
   const [checkInLoading, setCheckInLoading] = useState(false);
   const [isCheckInOpen, setIsCheckInOpen] = useState(false);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [isShareOpen, setIsShareOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
   const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [hasPhoto, setHasPhoto] = useState(false);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
-  const [shareImgSrc, setShareImgSrc] = useState<string | undefined>();
-  const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
-  useEffect(() => {
-    if (isShareOpen) {
-      const src = photoDataUrl || (cat ? cat.imageUrl : undefined);
-      if (src && src.startsWith("http")) {
-        fetch(`/api/proxy-image?url=${encodeURIComponent(src)}`)
-          .then(res => res.blob())
-          .then(blob => {
-            const reader = new FileReader();
-            reader.onloadend = () => setShareImgSrc(reader.result as string);
-            reader.readAsDataURL(blob);
-          }).catch(() => setShareImgSrc(src));
-      } else {
-        setShareImgSrc(src);
-      }
-    }
-  }, [isShareOpen, photoDataUrl, cat?.imageUrl]);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [reportStep, setReportStep] = useState<"camera" | "form">("camera");
   const [photoAttempts, setPhotoAttempts] = useState(0);
@@ -384,7 +378,14 @@ export default function CatProfile() {
         return n;
       });
       if (!found) {
-        newNames = [...newNames, { name: nameToVote, votes: Math.max(0, change), suggestedBy: "community" }];
+        newNames = [
+          ...newNames,
+          {
+            name: nameToVote,
+            votes: Math.max(0, change),
+            suggestedBy: "community",
+          },
+        ];
       }
       setCat((prev) => (prev ? { ...prev, names: newNames } : prev));
       await updateCatProfile(id, { names: newNames }).catch(() => {});
@@ -422,89 +423,86 @@ export default function CatProfile() {
 
     setCheckInLoading(true);
 
-    // Attempt GPS
-    let geo_point: [number, number] | undefined = undefined;
-    if ("geolocation" in navigator) {
-      try {
-        const pos = await new Promise<GeolocationPosition>(
-          (resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, {
-              timeout: 3000,
-            });
+    const isQualifiedForGallery = !!(user && !user.isAnonymous);
+    const actualAddToGallery = addToGallery && isQualifiedForGallery;
+
+    // Send to manual review
+    const submissionId = `checkin_${Date.now()}`;
+    try {
+      await addCheckInLog({
+        catId: cat.id,
+        wasFed,
+        healthStatus,
+        geo_point: undefined,
+        photoDataUrl: null, // Defer image save to avoid Firestore limits until approved
+        addToGallery: actualAddToGallery,
+        status: "under_review",
+        submissionId,
+        submittedBy: user?.uid,
+      });
+
+      fetch("/api/submit-for-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: submissionId,
+          type: "check_in",
+          details: {
+            catId: cat.id,
+            wasFed,
+            healthStatus,
+            geo_point: undefined,
+            addToGallery: actualAddToGallery,
+            submittedBy: user?.uid,
           },
-        );
-        geo_point = [pos.coords.latitude, pos.coords.longitude];
-      } catch (e) {
-        console.warn("GPS failed", e);
-      }
+          imageBase64: photoDataUrl,
+        }),
+      }).catch((err) => console.error("Background review failed", err));
+    } catch (err) {
+      console.error("Failed to submit:", err);
+      // Offline mode handling...
+      await addCheckInLog({
+        catId: cat.id,
+        wasFed,
+        healthStatus,
+        geo_point: undefined,
+        photoDataUrl: null,
+        addToGallery: actualAddToGallery,
+        status: "approved",
+        submissionId,
+        submittedBy: user?.uid,
+      });
+      await updateCatSighting(cat.id, {
+        wasFed,
+        activities: wasFed ? ["Feed"] : [],
+        notes: healthStatus !== "Good" ? healthStatus : undefined,
+        photoDataUrl: null,
+        addToGallery: actualAddToGallery,
+        isCheckIn: true,
+        status: "approved",
+        submittedBy: user?.uid,
+      });
     }
 
-    setTimeout(async () => {
-      const isQualifiedForGallery = !!(user && !user.isAnonymous && user.emailVerified);
-      const actualAddToGallery = addToGallery && isQualifiedForGallery;
-
-      // Send to manual review
-      const submissionId = `checkin_${Date.now()}`;
-      try {
-        await fetch("/api/submit-for-review", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: submissionId,
-            type: "check_in",
-            details: {
-              catId: cat.id,
-              wasFed,
-              healthStatus,
-              geo_point,
-              addToGallery: actualAddToGallery,
-              submittedBy: user?.uid,
-            },
-            imageBase64: photoDataUrl,
-          }),
-        });
-        alert("Check-in submitted and is under review!");
-        await addCheckInLog({
-          catId: cat.id,
-          wasFed,
-          healthStatus,
-          geo_point,
-          photoDataUrl,
-          addToGallery: actualAddToGallery,
-          status: "under_review",
-          submissionId,
-          submittedBy: user?.uid,
-        });
-      } catch (err) {
-        console.error("Failed to submit:", err);
-        alert("Submitted (offline preview mode).");
-        await addCheckInLog({
-          catId: cat.id,
-          wasFed,
-          healthStatus,
-          geo_point,
-          photoDataUrl,
-          addToGallery: actualAddToGallery,
-          status: "approved",
-          submissionId,
-          submittedBy: user?.uid,
-        });
-        await updateCatSighting(cat.id, {
-          wasFed,
-          activities: wasFed ? ["Feed"] : [],
-          notes: healthStatus !== "Good" ? healthStatus : undefined,
-          photoDataUrl,
-          addToGallery: actualAddToGallery,
-          isCheckIn: true,
-          status: "approved",
-          submittedBy: user?.uid,
-        });
-      }
-
-      setCheckInLoading(false);
-      setIsCheckInOpen(false);
-      setIsShareOpen(true);
-    }, 500);
+    setCheckInLoading(false);
+    setIsCheckInOpen(false);
+    navigate("/share", {
+      state: {
+        type: "submission",
+        cat,
+        topName,
+        userSettings,
+        user: user
+          ? {
+              uid: user.uid,
+              displayName: user.displayName,
+              photoURL: user.photoURL,
+              isAnonymous: user.isAnonymous,
+            }
+          : null,
+        photoDataUrl,
+      },
+    });
   };
 
   // 3. Crowdsourced Certainty
@@ -555,7 +553,25 @@ export default function CatProfile() {
             <Images className="w-5 h-5" />
           </button>
           <button
-            onClick={() => setIsShareOpen(true)}
+            onClick={() =>
+              navigate("/share", {
+                state: {
+                  type: "cat",
+                  cat,
+                  topName,
+                  userSettings,
+                  user: user
+                    ? {
+                        uid: user.uid,
+                        displayName: user.displayName,
+                        photoURL: user.photoURL,
+                        isAnonymous: user.isAnonymous,
+                      }
+                    : null,
+                  photoDataUrl,
+                },
+              })
+            }
             className="w-10 h-10 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors shadow-sm cursor-pointer pointer-events-auto"
           >
             <Share2 className="w-5 h-5" />
@@ -678,90 +694,97 @@ export default function CatProfile() {
 
           <p className="text-sm font-medium text-white/80 flex items-center gap-2 mb-4">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"></span>
-            Last seen {cat.locationName ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}` : "recently"}
+            Last seen{" "}
+            {cat.locationName
+              ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}`
+              : "recently"}
           </p>
-
-          {/* Check-In History Accordion (Moved here under tray) */}
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl border border-white/20 overflow-hidden">
-            <button
-              onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-              className="w-full flex items-center justify-between p-4 text-left transition-colors hover:bg-white/5 whitespace-nowrap"
-            >
-              <div className="flex items-center gap-2 truncate">
-                <History className="w-5 h-5 text-white/70 shrink-0" />
-                <span className="text-sm font-bold text-white truncate">
-                  Check-in History (Last 5)
-                </span>
-              </div>
-              {isHistoryOpen ? (
-                <ChevronUp className="w-5 h-5 text-white/50 shrink-0" />
-              ) : (
-                <ChevronDown className="w-5 h-5 text-white/50 shrink-0" />
-              )}
-            </button>
-
-            <AnimatePresence>
-              {isHistoryOpen && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: "auto", opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-4 pt-0 space-y-3">
-                    {checkInsHistory.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className="flex gap-4 items-start p-3 bg-black/20 rounded-xl"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center shrink-0 mt-1">
-                          <span className="text-xs">
-                            {item.fed ? "🍽️" : "🐾"}
-                          </span>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex justify-between items-start mb-1">
-                            <p className="text-sm font-bold text-white">
-                              {item.user}
-                            </p>
-                            <span className="text-[10px] font-bold text-white/70 bg-white/10 px-2 py-0.5 rounded-full">
-                              {new Date(item.time).toLocaleDateString()}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-1 mb-1">
-                            {item.status && item.status !== "approved" && (
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${item.status === 'under_review' ? 'text-yellow-300 bg-yellow-500/20' : 'text-red-300 bg-red-500/20'}`}>
-                                {item.status === 'under_review' ? 'Pending' : 'Rejected'}
-                              </span>
-                            )}
-                            {item.fed && (
-                              <span className="text-[10px] font-bold text-orange-200 bg-orange-500/20 px-2 py-0.5 rounded-md">
-                                Fed
-                              </span>
-                            )}
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${item.health === "Healthy" ? "text-green-300 bg-green-500/20" : "text-red-300 bg-red-500/20"}`}
-                            >
-                              {item.health}
-                            </span>
-                          </div>
-                          {item.notes && (
-                            <p className="text-xs text-white/80 italic mt-1 bg-black/30 p-2 rounded-lg">
-                              "{item.notes}"
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
         </div>
       </div>
 
       <div className="px-5 space-y-6 pt-6 relative z-0">
+        {/* Check-In History Accordion */}
+        <div className="bg-slate-900 rounded-3xl border border-slate-800 overflow-hidden">
+          <button
+            onClick={() => setIsHistoryOpen(!isHistoryOpen)}
+            className="w-full flex items-center justify-between p-4 text-left transition-colors hover:bg-slate-800 whitespace-nowrap"
+          >
+            <div className="flex items-center gap-2 truncate">
+              <History className="w-5 h-5 text-slate-400 shrink-0" />
+              <span className="text-sm font-bold text-white truncate">
+                Check-in History (Last 5)
+              </span>
+            </div>
+            {isHistoryOpen ? (
+              <ChevronUp className="w-5 h-5 text-slate-500 shrink-0" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-slate-500 shrink-0" />
+            )}
+          </button>
+
+          <AnimatePresence>
+            {isHistoryOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="p-4 pt-0 space-y-3">
+                  {checkInsHistory.map((item, idx) => (
+                    <div
+                      key={item.id}
+                      className="flex gap-4 items-start p-3 bg-slate-800 rounded-xl"
+                    >
+                      <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center shrink-0 mt-1">
+                        <span className="text-xs">
+                          {item.fed ? "🍽️" : "🐾"}
+                        </span>
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-1">
+                          <p className="text-sm font-bold text-white">
+                            {item.user}
+                          </p>
+                          <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                            {new Date(item.time).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {item.status && item.status !== "approved" && (
+                            <span
+                              className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${item.status === "under_review" ? "text-yellow-300 bg-yellow-500/20" : "text-red-300 bg-red-500/20"}`}
+                            >
+                              {item.status === "under_review"
+                                ? "Pending"
+                                : "Rejected"}
+                            </span>
+                          )}
+                          {item.fed && (
+                            <span className="text-[10px] font-bold text-orange-400 bg-orange-500/20 px-2 py-0.5 rounded-md">
+                              Fed
+                            </span>
+                          )}
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${item.health === "Healthy" ? "text-emerald-400 bg-emerald-500/20" : "text-red-400 bg-red-500/20"}`}
+                          >
+                            {item.health}
+                          </span>
+                        </div>
+                        {item.notes && (
+                          <p className="text-xs text-slate-400 italic mt-1 bg-slate-800 p-2 rounded-lg border border-slate-700">
+                            "{item.notes}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         {/* Name Tag Cloud (Community Aliases) */}
         <div className="bg-slate-900 rounded-3xl p-5 border border-slate-800">
           <div className="flex justify-between items-center mb-4">
@@ -807,23 +830,26 @@ export default function CatProfile() {
               value={newTagInput}
               onChange={(e) => {
                 const val = e.target.value.replace(/[^A-Za-z]/g, "");
-                if (val.length <= 8) setNewTagInput(val);
+                if (val.length <= 12) setNewTagInput(val);
               }}
               onKeyDown={handleSuggestName}
-              placeholder="Suggest an alias (max 8 chars)"
+              placeholder="Suggest an alias (max 12 chars)"
               className="w-full bg-slate-800 text-white placeholder-slate-500 border border-slate-700 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 transition-colors"
             />
             <button
-               onClick={() => {
-                 if(newTagInput.trim()) {
-                   // spoof enter key event
-                   handleSuggestName({ key: 'Enter', preventDefault: () => {} } as any);
-                 }
-               }}
-               disabled={!newTagInput.trim()}
-               className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
+              onClick={() => {
+                if (newTagInput.trim()) {
+                  // spoof enter key event
+                  handleSuggestName({
+                    key: "Enter",
+                    preventDefault: () => {},
+                  } as any);
+                }
+              }}
+              disabled={!newTagInput.trim()}
+              className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
             >
-               <Send className="w-4 h-4 text-white" />
+              <Send className="w-4 h-4 text-white" />
             </button>
           </div>
         </div>
@@ -887,7 +913,9 @@ export default function CatProfile() {
                       if (change !== 0 && cat && id) {
                         const chars = cat.characteristics || [];
                         const exists = chars.find(
-                          (c) => (c.tag?.toLowerCase() || "") === (char.tag?.toLowerCase() || ""),
+                          (c) =>
+                            (c.tag?.toLowerCase() || "") ===
+                            (char.tag?.toLowerCase() || ""),
                         );
                         let newTraits = [];
                         if (exists) {
@@ -955,8 +983,8 @@ export default function CatProfile() {
               className="w-full bg-slate-50 text-slate-900 placeholder-slate-400 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 focus:bg-white transition-colors"
             />
             <button
-               onClick={async () => {
-                 if(newTraitInput.trim()) {
+              onClick={async () => {
+                if (newTraitInput.trim()) {
                   const suggestValue = newTraitInput.trim();
                   const change = await executeWithVotePower(
                     "traits",
@@ -976,12 +1004,12 @@ export default function CatProfile() {
                       characteristics: newTraits,
                     }).catch(() => {});
                   }
-                 }
-               }}
-               disabled={!newTraitInput.trim()}
-               className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
+                }
+              }}
+              disabled={!newTraitInput.trim()}
+              className="bg-orange-500 px-4 py-3 rounded-xl font-bold hover:bg-orange-600 disabled:opacity-50 transition-colors"
             >
-               <Send className="w-4 h-4 text-white" />
+              <Send className="w-4 h-4 text-white" />
             </button>
           </div>
         </div>
@@ -1025,14 +1053,21 @@ export default function CatProfile() {
                       onClick={async (e) => {
                         e.stopPropagation();
                         const change = await executeWithVotePower(
-                           "gallery",
-                           "main",
-                           "You voted for this photo!",
+                          "gallery",
+                          "main",
+                          "You voted for this photo!",
                         );
                         if (change !== 0 && cat && id) {
-                          const newVotes = Math.max(0, (cat.imageUrlVotes || 0) + change);
-                          setCat((prev) => prev ? { ...prev, imageUrlVotes: newVotes } : prev);
-                          await updateCatProfile(id, { imageUrlVotes: newVotes }).catch(() => {});
+                          const newVotes = Math.max(
+                            0,
+                            (cat.imageUrlVotes || 0) + change,
+                          );
+                          setCat((prev) =>
+                            prev ? { ...prev, imageUrlVotes: newVotes } : prev,
+                          );
+                          await updateCatProfile(id, {
+                            imageUrlVotes: newVotes,
+                          }).catch(() => {});
                         }
                       }}
                       className={`bg-black/50 backdrop-blur-sm text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 transition-colors ${votedGallery.includes("main") ? "text-orange-400 ring-1 ring-orange-500 border border-orange-500" : "hover:bg-orange-500"}`}
@@ -1163,18 +1198,24 @@ export default function CatProfile() {
       {/* Floating Check-In Button / Container */}
       <div className="fixed sm:absolute bottom-0 inset-x-0 p-4 z-50 pointer-events-none flex justify-center">
         {!isCheckInOpen ? (
-          <button
-            onClick={() => {
-              setIsCheckInOpen(true);
-              setReportStep("camera");
-              setPhotoAttempts(0);
-              setPhotoDataUrl(null);
-            }}
-            className="w-full max-w-sm py-4 rounded-full bg-orange-500 text-white font-black text-lg shadow-[0_10px_30px_rgba(249,115,22,0.4)] pointer-events-auto hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-          >
-            <Plus className="w-6 h-6" />
-            Check In Straykin
-          </button>
+          <>
+            <button
+              onClick={() => {
+                setIsCheckInOpen(true);
+                setReportStep("form");
+                setPhotoAttempts(0);
+                setPhotoDataUrl(null);
+                setTimeout(
+                  () => document.getElementById("native-camera-input")?.click(),
+                  100,
+                );
+              }}
+              className="w-full max-w-sm py-4 rounded-full bg-orange-500 text-white font-black text-lg shadow-[0_10px_30px_rgba(249,115,22,0.4)] pointer-events-auto hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+            >
+              <Plus className="w-6 h-6" />
+              Check In Straykin
+            </button>
+          </>
         ) : reportStep === "form" ? (
           <div className="w-full bg-slate-900 rounded-[2rem] p-6 shadow-2xl pointer-events-auto border border-slate-800 animate-in slide-in-from-bottom-8 fade-in duration-300">
             <div className="flex justify-between items-center mb-5">
@@ -1202,18 +1243,21 @@ export default function CatProfile() {
                       <button
                         onClick={(e) => {
                           e.preventDefault();
-                          setPhotoDataUrl(null);
-                          setReportStep("camera");
+                          document
+                            .getElementById("native-camera-input")
+                            ?.click();
                         }}
-                        className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs font-bold px-3 py-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs font-bold px-3 py-1.5 rounded-full z-10 transition-opacity"
                       >
                         Retake
                       </button>
                     </>
                   ) : (
                     <button
-                      onClick={() => setReportStep("camera")}
-                      className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-orange-500 transition-colors"
+                      onClick={() =>
+                        document.getElementById("native-camera-input")?.click()
+                      }
+                      className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-orange-500 transition-colors relative z-10"
                     >
                       <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center">
                         <Plus className="w-5 h-5" />
@@ -1221,6 +1265,22 @@ export default function CatProfile() {
                       <span className="text-sm font-bold">Open Camera</span>
                     </button>
                   )}
+                  <input
+                    id="native-camera-input"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) =>
+                          setPhotoDataUrl(ev.target?.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
                 </div>
                 {photoDataUrl && (
                   <div className="flex flex-col mt-3 px-1">
@@ -1230,27 +1290,22 @@ export default function CatProfile() {
                       </span>
                       <button
                         onClick={() => {
-                          if (
-                            !user ||
-                            user.isAnonymous ||
-                            !user.emailVerified
-                          ) {
+                          if (!user || user.isAnonymous) {
                             setShowLoginModal(true);
                             return;
                           }
                           setAddToGallery(!addToGallery);
                         }}
-                        className={`w-12 h-6 rounded-full relative transition-colors ${addToGallery && !user?.isAnonymous && user?.emailVerified ? "bg-orange-500" : "bg-slate-600"} ${!user || user.isAnonymous || !user.emailVerified ? "opacity-50 cursor-not-allowed" : ""}`}
+                        className={`w-12 h-6 rounded-full relative transition-colors ${addToGallery && !user?.isAnonymous ? "bg-orange-500" : "bg-slate-600"} ${!user || user.isAnonymous ? "opacity-50 cursor-not-allowed" : ""}`}
                       >
                         <span
-                          className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${addToGallery && !user?.isAnonymous && user?.emailVerified ? "left-7" : "left-1"}`}
+                          className={`absolute top-1 bottom-1 w-4 bg-white rounded-full transition-all ${addToGallery && !user?.isAnonymous ? "left-7" : "left-1"}`}
                         ></span>
                       </button>
                     </div>
-                    {(!user || user.isAnonymous || !user.emailVerified) && (
+                    {(!user || user.isAnonymous) && (
                       <p className="text-[10px] text-slate-500 mt-1">
-                        Register and verify email to post photos to the
-                        community gallery.
+                        Register to post photos to the community gallery.
                       </p>
                     )}
                   </div>
@@ -1314,7 +1369,8 @@ export default function CatProfile() {
               Login Required
             </h2>
             <p className="text-slate-400 text-sm mb-6">
-              You need to be registered and logged in to use your vote power or perform this action.
+              You need to be registered and logged in to use your vote power or
+              perform this action.
             </p>
             <div className="flex gap-3">
               <button
@@ -1515,167 +1571,6 @@ export default function CatProfile() {
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Share Modal */}
-      {isShareOpen && (
-        <div className="fixed inset-0 z-[70] bg-black text-white flex flex-col justify-center items-center px-4 py-8">
-          <div className="w-full max-w-sm flex justify-between items-center mb-6">
-            <h2 className="text-xl font-black">Share Sighting</h2>
-            <button
-              onClick={() => {
-                setIsShareOpen(false);
-                setShareFinalImage(null);
-              }}
-              className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center font-bold"
-            >
-              ✕
-            </button>
-          </div>
-
-          {shareFinalImage ? (
-            <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95">
-              <img src={shareFinalImage} className="w-full rounded-[2.5rem] shadow-2xl mb-6" />
-              <p className="text-white text-sm font-bold bg-white/20 px-4 py-2 rounded-full animate-pulse">
-                Long press the image to save or share
-              </p>
-            </div>
-          ) : (
-            <>
-            <div id="shareCard" className="w-full max-w-sm aspect-[9/16] bg-slate-100 rounded-[2.5rem] overflow-hidden relative shadow-2xl flex flex-col">
-              <div className="w-full h-full absolute inset-0">
-                <img
-                  src={shareImgSrc || photoDataUrl || cat.imageUrl}
-                  className="w-full h-[65%] object-cover"
-                  crossOrigin={(shareImgSrc || photoDataUrl || cat.imageUrl)?.startsWith("http") ? "anonymous" : undefined}
-                />
-              </div>
-              <div className="w-full h-[45%] absolute bottom-0 left-0">
-                <img src="/card.png" className="w-full h-full object-fill absolute inset-0 z-10" crossOrigin="anonymous" />
-                <div className="relative z-20 w-full h-full p-8 pt-16 flex flex-col justify-between">
-                  <div className="flex justify-between items-start gap-2 pb-[6px] mb-[6px] mt-[9px]">
-                    <div className="flex-1 pr-2">
-                      <h3 className="text-4xl font-black text-white leading-none break-words mb-0 pb-0">
-                        {topName}
-                      </h3>
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>
-                        <p className="text-sm font-bold text-white/90 truncate">
-                          {cat.locationName ? (cat.locationName.length > 25 ? cat.locationName.substring(0, 25) + "..." : cat.locationName) : "Spotted near me"}
-                        </p>
-                      </div>
-                      <p className="text-sm font-medium text-white/90">
-                        Has been fed by{" "}
-                        {user?.isAnonymous
-                          ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
-                          : userSettings.displayName ||
-                            user?.displayName ||
-                            "A Kind Soul"}
-                      </p>
-                    </div>
-                    <div className="w-16 h-16 bg-white rounded-xl shadow-lg shrink-0 overflow-hidden">
-                      <img
-                        src={`/api/proxy-image?url=${encodeURIComponent(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`)}`}
-                        alt="QR Code"
-                        className="w-full h-full object-contain p-1"
-                        crossOrigin="anonymous"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex justify-start items-end -mt-4">
-                  </div>
-                </div>
-              </div>
-            </div>
-
-          <div className="w-full max-w-sm mt-8 flex gap-4">
-            <button
-              onClick={async () => {
-                const el = document.getElementById("shareCard");
-                if(el) {
-                  try {
-                    const pixelRatio = 1080 / el.offsetWidth;
-                    const dataUrl = await toPng(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
-                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-                    if (isIOS) {
-                      setShareFinalImage(dataUrl);
-                      return;
-                    }
-
-                    const approved = localStorage.getItem("save_image_approved");
-                    if (!approved) {
-                      const proceed = window.confirm("Do you want to save this image? (We won't ask again)");
-                      if (!proceed) return;
-                      localStorage.setItem("save_image_approved", "true");
-                    }
-
-                    const link = document.createElement("a");
-                    link.download = `straykin_${cat.id}.png`;
-                    link.href = dataUrl;
-                    link.click();
-                    setIsShareOpen(false);
-                  } catch (e) {
-                    console.error("Failed to generate image", e);
-                  }
-                }
-              }}
-              className="flex-1 py-4 bg-slate-800 text-white rounded-2xl font-black"
-            >
-              Save Image
-            </button>
-            <button
-              onClick={async () => {
-                const el = document.getElementById("shareCard");
-                if(el) {
-                  try {
-                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-                    const pixelRatio = 1080 / el.offsetWidth;
-                    
-                    if (isIOS) {
-                      const dataUrl = await toPng(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
-                      setShareFinalImage(dataUrl);
-                      return;
-                    }
-
-                    const blob = await toBlob(el, { cacheBust: true, pixelRatio, style: { margin: "0" } });
-                    const approved = localStorage.getItem("share_stray_approved");
-                    if (!approved) {
-                      const proceed = window.confirm("Do you want to share this stray? (We won't ask again)");
-                      if (!proceed) return;
-                      localStorage.setItem("share_stray_approved", "true");
-                    }
-                    if (!blob) return;
-                    {
-                      const file = new File([blob], "straykin.jpg", {
-                        type: blob.type,
-                      });
-                      if (
-                        navigator.canShare &&
-                        navigator.canShare({ files: [file] })
-                      ) {
-                        await navigator.share({
-                          title: `Spotted ${cat.name || "a Straykin"}!`,
-                          text: `Check out ${cat.name || "this stray"} on Straykin!`,
-                          files: [file],
-                        });
-                        setIsShareOpen(false);
-                      } else {
-                        alert("Sharing is not supported on this device.");
-                      }
-                    }
-                  } catch (e) {
-                    console.error("Failed to generate image", e);
-                  }
-                }
-              }}
-              className="flex-1 py-4 bg-orange-500 text-white rounded-2xl font-black"
-            >
-              Share Image
-            </button>
-          </div>
-          </>
-        )}
         </div>
       )}
     </div>

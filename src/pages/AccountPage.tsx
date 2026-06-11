@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useCatDatabase } from "../hooks/useCatDatabase";
 import { useLazyAuth } from "../hooks/useLazyAuth";
+import { usePWAInstall } from "../hooks/usePWAInstall";
 import { useNavigate } from "react-router-dom";
 import { CustomIcon } from "../components/CustomIcon";
 import { AdBanner } from "../components/AdBanner";
@@ -20,7 +21,11 @@ import {
   Menu,
   ExternalLink,
   MapPin,
-  Bell
+  Bell,
+  Share2,
+  Cat,
+  Dog,
+  PawPrint
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
@@ -66,6 +71,7 @@ interface UserProfile {
   };
   role_preference?: "caretaker" | "pawrent";
   unlocked_badges: string[];
+  active_title?: string;
   pets: Pet[];
   favorites?: string[];
 }
@@ -79,6 +85,7 @@ export default function AccountPage() {
     resendVerification,
   } = useLazyAuth();
   const { permission, requestPermission } = usePushNotifications();
+  const { deferredPrompt, isIOS, isStandalone, triggerInstall } = usePWAInstall();
   const { cats, updateCatProfile } = useCatDatabase();
   const navigate = useNavigate();
 
@@ -94,8 +101,7 @@ export default function AccountPage() {
   // Mock User State (In a real app, this would be fetched from Firestore /users/{uid})
   const [profile, setProfile] = useState<UserProfile>(() => {
     const saved = localStorage.getItem("user_profile");
-    if (saved) return JSON.parse(saved);
-    return {
+    let parsed = {
       gamification: {
         total_xp: 0,
         stray_submissions: 0,
@@ -105,9 +111,24 @@ export default function AccountPage() {
       pets: [],
       favorites: [],
     };
+    if (saved) {
+      try {
+        const p = JSON.parse(saved);
+        parsed = {
+          ...parsed,
+          ...p,
+          gamification: { ...parsed.gamification, ...(p.gamification || {}) },
+          unlocked_badges: p.unlocked_badges || [],
+          pets: p.pets || [],
+          favorites: p.favorites || [],
+        };
+      } catch (e) {}
+    }
+    return parsed;
   });
 
   const [userSubmissions, setUserSubmissions] = useState<any[]>([]);
+  const [userCheckIns, setUserCheckIns] = useState<any[]>([]);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,12 +179,48 @@ export default function AccountPage() {
           const { collection, query, where, getDocs, or } = await import('firebase/firestore');
           const { db } = await import('../config/firebase');
           
-          // Fetch Submissions
           if (user.uid) {
+            // Fetch strays/submissions
             const subQ = query(collection(db, 'strays'), where('submittedBy', '==', user.uid));
             const subSnap = await getDocs(subQ);
             const fetchedSubs = subSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setUserSubmissions(fetchedSubs);
+            
+            // Fetch check-ins
+            const checkQ = query(collection(db, 'check_ins'), where('submittedBy', '==', user.uid));
+            const checkSnap = await getDocs(checkQ);
+            setUserCheckIns(checkSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            
+            // Sync Gamification Stats based on previous database records
+            setProfile(p => {
+                const strayCount = Math.max(fetchedSubs.length, p.gamification.stray_submissions || 0);
+                const checkCount = Math.max(checkSnap.docs.length, p.gamification.check_ins || 0);
+                
+                // Recalculate estimated totalXP (simplified reconstruction if it was lost)
+                // Assuming 50 XP per stray submission, 20 XP per check-in
+                let calculatedXp = (strayCount * 50) + (checkCount * 20);
+                const totalXP = Math.max(calculatedXp, p.gamification.total_xp || 0);
+                
+                const unlocked = new Set(p.unlocked_badges);
+                if (!user.isAnonymous) unlocked.add("pawtrainee");
+                if (strayCount >= 1) unlocked.add("pawrent");
+                if (strayCount >= 5) unlocked.add("stray_savior");
+                if (strayCount >= 10) unlocked.add("cat_whisperer");
+                
+                if (checkCount >= 1) unlocked.add("good_samaritan");
+                if (checkCount >= 10) unlocked.add("reliable_feeder");
+                if (checkCount >= 50) unlocked.add("neighborhood_guardian");
+                
+                return {
+                    ...p,
+                    gamification: {
+                        stray_submissions: strayCount,
+                        check_ins: checkCount,
+                        total_xp: totalXP
+                    },
+                    unlocked_badges: Array.from(unlocked)
+                };
+            });
           }
 
           // Fetch Pets
@@ -610,7 +667,15 @@ export default function AccountPage() {
 
     return (
       <div
-        className={`flex flex-col items-center text-center transition-all ${isUnlocked ? "" : "opacity-50 grayscale"}`}
+        onClick={() => {
+          if (isUnlocked) {
+            const updated = { ...profile, active_title: name };
+            setProfile(updated);
+            localStorage.setItem("user_profile", JSON.stringify(updated));
+            alert(`Title changed to ${name}!`);
+          }
+        }}
+        className={`flex flex-col items-center text-center transition-all ${isUnlocked ? "cursor-pointer" : "opacity-50 grayscale"} ${profile.active_title === name ? "ring-2 ring-orange-500 rounded-xl p-2" : "p-2"}`}
       >
         <div
           className={`w-14 h-14 rounded-full mb-2 flex items-center justify-center shadow-sm border border-slate-100 relative ${isUnlocked ? "bg-orange-50" : "bg-slate-50"}`}
@@ -623,13 +688,27 @@ export default function AccountPage() {
           )}
         </div>
         <h4
-          className={`text-xs font-bold ${isUnlocked ? "text-slate-800" : "text-slate-500"}`}
+          className={`text-xs font-bold leading-tight ${isUnlocked ? "text-slate-800" : "text-slate-500"}`}
         >
           {name}
         </h4>
+        {profile.active_title === name && (
+            <span className="text-[9px] font-bold text-orange-500 mt-1 uppercase">Active</span>
+        )}
       </div>
     );
   };
+
+  const localUserCats = cats.filter((c) => c.submittedBy === (user?.uid || "anonymous"));
+  const allSubs = [...userSubmissions];
+  localUserCats.forEach(lc => {
+    if (!allSubs.find(s => s.id === lc.id)) {
+      allSubs.push(lc);
+    }
+  });
+  const firstStrayImage = allSubs.find(s => s.imageUrl)?.imageUrl;
+  const firstPetImage = profile.pets?.[0]?.photoDataUrl;
+  const firstCheckInImage = userCheckIns.find(c => c.imageUrl)?.imageUrl;
 
   return (
     <div className="h-full w-full bg-slate-100 overflow-y-auto flex flex-col font-sans pb-12">
@@ -680,18 +759,38 @@ export default function AccountPage() {
                   ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
                   : user?.displayName || "App User"}
               </h2>
-              {user && !user.isAnonymous && (
-                <button
-                  onClick={() => setActiveTab("account")}
-                  className="p-1.5 text-slate-400 hover:text-slate-600 bg-slate-50 border border-slate-100 rounded-full"
-                >
-                  <CustomIcon
-                    src="/icon-edit.png"
-                    FallbackIcon={Edit2}
-                    className="w-4 h-4"
-                  />
-                </button>
-              )}
+              <div className="flex items-center gap-2">
+                {user && !user.isAnonymous && (
+                  <button
+                    onClick={() => navigate('/share', { state: { 
+                      type: 'profile', 
+                      user: user ? { uid: user.uid, displayName: user.displayName, photoURL: user.photoURL, isAnonymous: user.isAnonymous } : null,
+                      userSettings,
+                      profile, 
+                      firstStrayImage,
+                      firstPetImage,
+                      firstCheckInImage,
+                      checkInCount: userCheckIns.length,
+                      strayCount: allSubs.length
+                    } })}
+                    className="p-1.5 text-orange-500 hover:text-orange-600 bg-orange-50 border border-orange-100 rounded-full transition-colors"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                )}
+                {user && !user.isAnonymous && (
+                  <button
+                    onClick={() => setActiveTab("account")}
+                    className="p-1.5 text-slate-400 hover:text-slate-600 bg-slate-50 border border-slate-100 rounded-full transition-colors"
+                  >
+                    <CustomIcon
+                      src="/icon-edit.png"
+                      FallbackIcon={Edit2}
+                      className="w-4 h-4"
+                    />
+                  </button>
+                )}
+              </div>
             </div>
 
             {!user || user.isAnonymous ? (
@@ -700,7 +799,7 @@ export default function AccountPage() {
               </p>
             ) : (
               <p className="text-xs font-bold text-orange-600 bg-orange-50 inline-block px-2 py-0.5 rounded-md mt-1 border border-orange-100 uppercase tracking-wide">
-                Neighborhood Caretaker
+                {profile.active_title || "Neighborhood Caretaker"}
               </p>
             )}
 
@@ -755,6 +854,33 @@ export default function AccountPage() {
         {/* Gamification Level Frame Hidden */}
         {/* !user?.isAnonymous && ( ... ) */}
       </div>
+
+      {!isStandalone && (
+        <div className="px-4 pt-6">
+          <div className="bg-slate-800 text-white rounded-[2rem] p-5 shadow-sm border border-slate-700 flex flex-col gap-3">
+            <h3 className="font-black text-lg text-orange-400">Add to Home Screen</h3>
+            <p className="text-sm font-medium text-slate-300">
+              Install Straykin on your device for quick and easy access.
+            </p>
+            {isIOS ? (
+              <p className="text-xs text-slate-400 bg-slate-700/50 p-3 rounded-xl border border-slate-600">
+                Tap the <strong>Share</strong> icon in your browser menu and select <strong>Add to Home Screen</strong>.
+              </p>
+            ) : deferredPrompt ? (
+              <button 
+                onClick={triggerInstall}
+                className="w-full py-3 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-colors mt-1"
+              >
+                Install App
+              </button>
+            ) : (
+              <p className="text-xs text-slate-400 bg-slate-700/50 p-3 rounded-xl border border-slate-600">
+                Use your browser menu to <strong>Install</strong> or <strong>Add to Home Screen</strong>.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="px-4 pt-4 flex justify-center">
         <AdBanner format="rectangle" />
@@ -1101,7 +1227,7 @@ export default function AccountPage() {
               </p>
 
               {!user || user.isAnonymous ? (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center mb-6">
                   <div className="w-12 h-12 bg-slate-200 text-slate-400 rounded-full flex items-center justify-center mx-auto mb-3">
                     <Lock className="w-5 h-5" />
                   </div>
@@ -1118,71 +1244,59 @@ export default function AccountPage() {
                     Register Now
                   </button>
                 </div>
-              ) : profile.unlocked_badges.length === 0 ? (
-                <div className="bg-blue-50 border border-blue-100 rounded-3xl p-6 text-center">
-                  <div className="w-12 h-12 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Award className="w-6 h-6" />
-                  </div>
-                  <h4 className="text-blue-900 font-bold mb-1">
-                    No Achievements Yet
-                  </h4>
-                  <p className="text-sm text-blue-700 font-medium">
-                    Start now and help them all!
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 gap-y-6 gap-x-2">
-                  {renderBadge(
-                    "pawtrainee",
-                    "Pawtrainee",
-                    "Registered",
-                    "checkins",
-                    0,
-                  )}
-                  {renderBadge(
-                    "first_encounter",
-                    "First Encounter",
-                    "1 Stray",
-                    "strays",
-                    1,
-                  )}
-                  {renderBadge(
-                    "cat_cartographer",
-                    "Cat Cartographer",
-                    "10 Strays",
-                    "strays",
-                    10,
-                  )}
-                  {renderBadge(
-                    "colony_guardian",
-                    "Colony Guardian",
-                    "50 Strays",
-                    "strays",
-                    50,
-                  )}
-                  {renderBadge(
-                    "good_samaritan",
-                    "Samaritan",
-                    "1 Check-in",
-                    "checkins",
-                    1,
-                  )}
-                  {renderBadge(
-                    "reliable_provider",
-                    "Reliable",
-                    "30 Check-ins",
-                    "checkins",
-                    30,
-                  )}
-                  {renderBadge(
-                    "neighborhood_feeder",
-                    "Feeder",
-                    "150 Check-ins",
-                    "checkins",
-                    150,
-                  )}
-                </div>
-              )}
+              ) : null}
+
+              <div className="grid grid-cols-3 gap-y-6 gap-x-2">
+                {renderBadge(
+                  "pawtrainee",
+                  "Pawtrainee",
+                  "Registered",
+                  "checkins",
+                  0,
+                )}
+                {renderBadge(
+                  "pawrent",
+                  "Pawrent",
+                  "1 Stray",
+                  "strays",
+                  1,
+                )}
+                {renderBadge(
+                  "stray_savior",
+                  "Stray Savior",
+                  "5 Strays",
+                  "strays",
+                  5,
+                )}
+                {renderBadge(
+                  "cat_whisperer",
+                  "Cat Whisperer",
+                  "10 Strays",
+                  "strays",
+                  10,
+                )}
+                {renderBadge(
+                  "good_samaritan",
+                  "Samaritan",
+                  "1 Check-in",
+                  "checkins",
+                  1,
+                )}
+                {renderBadge(
+                  "reliable_feeder",
+                  "Feeder",
+                  "10 Check-ins",
+                  "checkins",
+                  10,
+                )}
+                {renderBadge(
+                  "neighborhood_guardian",
+                  "Guardian",
+                  "50 Check-ins",
+                  "checkins",
+                  50,
+                )}
+              </div>
             </div>
           </div>
         )}

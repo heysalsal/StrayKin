@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 import MapView from './components/MapView';
 import CatProfile from './pages/CatProfile';
@@ -15,8 +15,10 @@ import TermsPage from './pages/TermsPage';
 import ContactSupportPage from './pages/ContactSupportPage';
 import SuggestionFeedbackPage from './pages/SuggestionFeedbackPage';
 import PetProfile from './pages/PetProfile';
+import SharePage from './pages/SharePage';
 import { CatProvider } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
+import { InstallPWA } from './components/InstallPWA';
 
 function SplashScreen({ onComplete }: { onComplete: () => void }) {
   const [fade, setFade] = useState(false);
@@ -48,6 +50,7 @@ function MainLayout() {
   return (
     <div className="flex flex-col h-screen w-full sm:max-w-md sm:mx-auto sm:border-x sm:border-slate-200 bg-[#e5e7eb] font-sans overflow-hidden sm:shadow-2xl relative">
       {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      <InstallPWA />
       
       <main className="flex-1 relative flex overflow-hidden">
         <Routes>
@@ -61,6 +64,7 @@ function MainLayout() {
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/support" element={<ContactSupportPage />} />
           <Route path="/suggestions" element={<SuggestionFeedbackPage />} />
+          <Route path="/share" element={<SharePage />} />
         </Routes>
       </main>
     </div>

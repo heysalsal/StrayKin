@@ -5,17 +5,59 @@ self.options = {
 self.lary = ""
 importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw')
 
-const CACHE_NAME = 'straykin-images-cache-v1';
+const CACHE_NAME = 'straykin-images-cache-v2';
+
+const AD_FILES = [
+  '/ad-160x600.html',
+  '/ad-300x250.html',
+  '/ad-728x90.html',
+  '/ad-inpage.html'
+];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(AD_FILES);
+    })
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME && cacheName.startsWith('straykin-')) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+  self.clients.claim();
+});
 
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
   
+  if (event.request.destination === 'document' && requestUrl.pathname.startsWith('/ad-')) {
+      event.respondWith(
+        caches.match(event.request).then((cachedResponse) => {
+             return cachedResponse || fetch(event.request);
+        })
+      );
+      return;
+  }
+
   // Cache images: check if the request is an image or if the url has an image extension
   // Often Firestore/Cloud Storage images don't have typical extensions in the URL path, 
   // so we also rely on the request destination.
   if (event.request.destination === 'image' || 
       requestUrl.pathname.match(/\.(png|jpg|jpeg|gif|webp)$/i) ||
-      requestUrl.hostname.includes('firebasestorage.googleapis.com')) {
+      requestUrl.hostname.includes('firebasestorage.googleapis.com') ||
+      requestUrl.hostname.includes('bunnycdn.com') ||
+      requestUrl.hostname.includes('b-cdn.net')) {
     
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
