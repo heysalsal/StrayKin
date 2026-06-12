@@ -177,10 +177,7 @@ export default function MapView() {
   const [notes, setNotes] = useState("");
   const [addToGallery, setAddToGallery] = useState(true);
 
-  const [isShareOpen, setIsShareOpen] = useState(false);
   const [earnedTitle, setEarnedTitle] = useState("");
-  const [shareImgSrc, setShareImgSrc] = useState<string | undefined>();
-  const [shareFinalImage, setShareFinalImage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const {
@@ -194,25 +191,6 @@ export default function MapView() {
     updateViewport,
   } = useCatDatabase();
   const { user, loading: authLoading, upgradeToGoogleAccount, signInAnonymouslyIfNeeded } = useLazyAuth();
-
-  useEffect(() => {
-    if (isShareOpen) {
-      const src = photoDataUrl || (selectedCatId ? cats.find((c) => c.id === selectedCatId)?.imageUrl : undefined);
-      if (src && src.startsWith("http")) {
-        fetch(`/api/proxy-image?url=${encodeURIComponent(src)}`)
-          .then(res => res.blob())
-          .then(blob => {
-            const reader = new FileReader();
-            reader.onloadend = () => setShareImgSrc(reader.result as string);
-            reader.readAsDataURL(blob);
-          }).catch(() => setShareImgSrc(src));
-      } else if (src) {
-        setShareImgSrc(src);
-      } else {
-        setShareImgSrc(undefined);
-      }
-    }
-  }, [isShareOpen, photoDataUrl, selectedCatId]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -519,7 +497,11 @@ export default function MapView() {
       if (titleToAward) {
          setEarnedTitle(titleToAward);
       } else {
-         setIsShareOpen(true);
+         navigate('/share', { replace: true, state: { 
+            type: 'submission', 
+            cat: selectedCatId ? cats.find(c => c.id === selectedCatId) : undefined, 
+            photoDataUrl 
+         }});
       }
     };
 
@@ -1348,7 +1330,11 @@ export default function MapView() {
             <button
               onClick={() => {
                 setEarnedTitle("");
-                setIsShareOpen(true);
+                navigate('/share', { replace: true, state: { 
+                   type: 'submission', 
+                   cat: selectedCatId ? cats.find(c => c.id === selectedCatId) : undefined, 
+                   photoDataUrl 
+                }});
               }}
               className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-600/30 hover:bg-indigo-700"
             >
@@ -1358,168 +1344,7 @@ export default function MapView() {
         </div>
       )}
 
-      {isShareOpen && (
-        <div className="fixed inset-0 z-[70] bg-black text-white flex flex-col justify-center items-center px-4 py-8">
-          <div className="w-full max-w-sm flex justify-between items-center mb-6">
-            <h2 className="text-xl font-black">Share Sighting</h2>
-            <button
-              onClick={() => {
-                setIsShareOpen(false);
-                setShareFinalImage(null);
-              }}
-              className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center font-bold"
-            >
-              ✕
-            </button>
-          </div>
 
-          {shareFinalImage ? (
-            <div className="w-full max-w-sm flex flex-col items-center animate-in zoom-in-95">
-              <img src={shareFinalImage} className="w-full rounded-[2.5rem] shadow-2xl mb-6" />
-              <p className="text-white text-sm font-bold bg-white/20 px-4 py-2 rounded-full animate-pulse">
-                Long press the image to save or share
-              </p>
-            </div>
-          ) : (
-            <>
-          <div
-            id="share-card"
-            className="w-full max-w-sm aspect-[9/16] bg-slate-100 rounded-[2.5rem] overflow-hidden relative shadow-2xl flex flex-col"
-          >
-            <div className="w-full h-full absolute inset-0">
-              {shareImgSrc && (
-                <img
-                  src={shareImgSrc}
-                  className="w-full h-[65%] object-cover"
-                  crossOrigin={shareImgSrc.startsWith("http") ? "anonymous" : undefined}
-                />
-              )}
-            </div>
-            <div className="w-full h-[45%] absolute bottom-0 left-0">
-              <img src="/card.png" className="w-full h-full object-fill absolute inset-0 z-10" crossOrigin="anonymous" />
-              <div className="relative z-20 w-full h-full p-8 pt-16 flex flex-col justify-between">
-                <div className="flex justify-between items-start gap-2 pb-[6px] mb-[6px] mt-[9px]">
-                  <div className="flex-1 pr-2">
-                    <h3 className="text-4xl font-black text-white leading-none break-words mb-0 pb-0">
-                      {nameInput ||
-                        (selectedCatId
-                          ? cats.find((c) => c.id === selectedCatId)?.name
-                          : "Straykin")}
-                    </h3>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>
-                      <p className="text-sm font-bold text-white/90">
-                        Spotted near me
-                      </p>
-                    </div>
-                    <p className="text-sm font-medium text-white/90">
-                      Has been fed by{" "}
-                      {(() => {
-                        let title = "";
-                        const profileStr = localStorage.getItem("user_profile");
-                        if (profileStr) {
-                          try {
-                              const p = JSON.parse(profileStr);
-                              if (p.active_title) title = `(${p.active_title}) `;
-                          } catch(e) {}
-                        }
-                        const name = userSettings.isAnonymous
-                          ? userSettings.displayName
-                            ? userSettings.displayName.slice(0, 2) +
-                              "*".repeat(userSettings.displayName.length - 2)
-                            : "Anonymous"
-                          : userSettings.displayName || "A Kind Soul";
-                        return <>{title}{name}</>;
-                      })()}
-                    </p>
-                  </div>
-                  <div className="w-16 h-16 bg-white rounded-xl shadow-lg shrink-0 overflow-hidden">
-                    <img
-                      src={`/api/proxy-image?url=${encodeURIComponent(`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.origin)}`)}`}
-                      alt="QR Code"
-                      className="w-full h-full object-contain p-1"
-                      crossOrigin="anonymous"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-start items-end -mt-4">
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="w-full max-w-sm mt-8 flex gap-4">
-            <button
-              onClick={async () => {
-                const node = document.getElementById("share-card");
-                if (node) {
-                  const { toPng } = await import("html-to-image");
-                  const download = (await import("downloadjs")).default;
-                  try {
-                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-                    const dataUrl = await toPng(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
-                    if (isIOS) {
-                      setShareFinalImage(dataUrl);
-                      return;
-                    }
-                    download(dataUrl, "straykin-sighting.png");
-                  } catch (err) {
-                    alert("Could not generate image");
-                  }
-                }
-              }}
-              className="flex-1 py-4 bg-slate-800 text-white rounded-2xl font-black"
-            >
-              Save Image
-            </button>
-            <button
-              onClick={async () => {
-                const node = document.getElementById("share-card");
-                if (node) {
-                  try {
-                    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-                    if (isIOS) {
-                      const { toPng } = await import("html-to-image");
-                      const dataUrl = await toPng(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
-                      setShareFinalImage(dataUrl);
-                      return;
-                    }
-
-                    if (navigator.share) {
-                      const { toBlob } = await import("html-to-image");
-                      const blob = await toBlob(node, { quality: 0.95, cacheBust: true, style: { margin: "0" } });
-                      if (!blob) return;
-                      const file = new File([blob], "straykin.jpg", { type: blob.type });
-
-                      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-                        await navigator.share({
-                          title: `Spotted ${nameInput || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.name) || "a Straykin"}!`,
-                          text: `Check out this Straykin on the map!`,
-                          files: [file],
-                        });
-                        setIsShareOpen(false);
-                      } else {
-                        await navigator.share({
-                          title: `Spotted ${nameInput || (selectedCatId && cats.find((c) => c.id === selectedCatId)?.name) || "a Straykin"}!`,
-                          text: `Check out this Straykin on the map!`,
-                          url: window.location.href,
-                        });
-                      }
-                    }
-                  } catch (err) {
-                    // Ignore share cancel
-                  }
-                }
-              }}
-              className="flex-1 py-4 bg-orange-500 text-white rounded-2xl font-black"
-            >
-              Share to App
-            </button>
-          </div>
-          </>
-        )}
-        </div>
-      )}
 
       {pendingNavigation && (
         <InterstitialAd

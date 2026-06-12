@@ -487,6 +487,7 @@ export default function CatProfile() {
     setCheckInLoading(false);
     setIsCheckInOpen(false);
     navigate("/share", {
+      replace: true,
       state: {
         type: "submission",
         cat,

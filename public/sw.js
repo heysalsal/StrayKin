@@ -5,9 +5,11 @@ self.options = {
 self.lary = ""
 importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw')
 
-const CACHE_NAME = 'straykin-images-cache-v2';
+const CACHE_NAME = 'straykin-assets-cache-v3';
 
 const AD_FILES = [
+  '/',
+  '/index.html',
   '/ad-160x600.html',
   '/ad-300x250.html',
   '/ad-728x90.html',
@@ -50,21 +52,59 @@ self.addEventListener('fetch', (event) => {
       return;
   }
 
-  // Cache images: check if the request is an image or if the url has an image extension
-  // Often Firestore/Cloud Storage images don't have typical extensions in the URL path, 
-  // so we also rely on the request destination.
+  // Cache JS, CSS or HTML files
+  if (event.request.destination === 'script' || event.request.destination === 'style' || event.request.destination === 'document') {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          // Stale-while-revalidate for JS/CSS
+          fetch(event.request).then((networkResponse) => {
+            if (networkResponse && networkResponse.status === 200) {
+              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+            }
+          }).catch(() => {});
+          return cachedResponse;
+        }
+        return fetch(event.request).then((networkResponse) => {
+          if (!networkResponse || (networkResponse.status !== 200 && networkResponse.type !== 'opaque')) {
+            return networkResponse;
+          }
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+          return networkResponse;
+        }).catch(() => {
+            // When offline and navigating, return index.html for SPA as a fallback
+            if (event.request.destination === 'document') {
+                return caches.match('/index.html');
+            }
+        });
+      })
+    );
+    return;
+  }
+
+  // Cache map tiles, images
   if (event.request.destination === 'image' || 
       requestUrl.pathname.match(/\.(png|jpg|jpeg|gif|webp)$/i) ||
       requestUrl.hostname.includes('firebasestorage.googleapis.com') ||
       requestUrl.hostname.includes('bunnycdn.com') ||
-      requestUrl.hostname.includes('b-cdn.net')) {
+      requestUrl.hostname.includes('b-cdn.net') || 
+      requestUrl.hostname.includes('tile.openstreetmap.org')) {
     
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
         // If we have a cached version, return it
         if (cachedResponse) {
-          // Optional: we can still fetch in the background to keep the cache fresh (stale-while-revalidate)
-          // But for offline support, returning the cached item is the priority
+          // Fetch and update occasionally
+          if (!requestUrl.hostname.includes('tile.openstreetmap.org')) {
+            fetch(event.request).then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                 caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+              }
+            }).catch(() => {});
+          }
           return cachedResponse;
         }
 
@@ -85,7 +125,6 @@ self.addEventListener('fetch', (event) => {
           return networkResponse;
         }).catch(() => {
            // Fetch failed (e.g. offline) and no cache found. 
-           // In a full implementation, you could return a default offline placeholder image here.
         });
       })
     );
