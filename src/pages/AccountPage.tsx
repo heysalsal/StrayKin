@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import { CustomIcon } from "../components/CustomIcon";
 import { AdBanner } from "../components/AdBanner";
 import { usePushNotifications } from "../hooks/usePushNotifications";
+import { useSettings } from "../context/SettingsContext";
 import {
   ArrowLeft,
   User as UserIcon,
@@ -29,6 +30,8 @@ import {
 } from "lucide-react";
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
+
+import { HubManager } from "../components/HubManager";
 
 function MapController({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -74,6 +77,7 @@ interface UserProfile {
   active_title?: string;
   pets: Pet[];
   favorites?: string[];
+  bound_hub_id?: string[];
 }
 
 export default function AccountPage() {
@@ -88,17 +92,24 @@ export default function AccountPage() {
   const { deferredPrompt, isIOS, isStandalone, triggerInstall } = usePWAInstall();
   const { cats, updateCatProfile } = useCatDatabase();
   const navigate = useNavigate();
+  const { settings } = useSettings();
 
   const [activeTab, setActiveTab] = useState<
-    "submissions" | "pets" | "account" | "other"
+    "submissions" | "pets" | "account" | "other" | "hub_manager"
   >("submissions");
   const [inviteCodeInput, setInviteCodeInput] = useState("");
 
   const [subTab, setSubTab] = useState<"submissions" | "favorites">(
     "submissions",
   );
+  const [subTabSearchQuery, setSubTabSearchQuery] = useState("");
+  const [subTabCurrentPage, setSubTabCurrentPage] = useState(1);
+  const itemsPerPage = 5;
 
-  // Mock User State (In a real app, this would be fetched from Firestore /users/{uid})
+  useEffect(() => {
+    setSubTabCurrentPage(1);
+  }, [subTabSearchQuery, subTab]);
+
   const [profile, setProfile] = useState<UserProfile>(() => {
     const saved = localStorage.getItem("user_profile");
     let parsed = {
@@ -126,6 +137,30 @@ export default function AccountPage() {
     }
     return parsed;
   });
+
+  const [fetchedFavCats, setFetchedFavCats] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (profile.favorites && profile.favorites.length > 0) {
+      const fetchFavs = async () => {
+        try {
+          const { doc, getDoc } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          const missingIds = profile.favorites!.filter(id => !cats.find(c => c.id === id));
+          if (missingIds.length > 0) {
+            const fetched = await Promise.all(missingIds.map(async id => {
+              const d = await getDoc(doc(db, 'strays', id));
+              return d.exists() ? { id: d.id, ...d.data() } : null;
+            }));
+            setFetchedFavCats(fetched.filter(Boolean));
+          }
+        } catch (e) {
+          console.error("Failed to fetch missing favorites", e);
+        }
+      };
+      fetchFavs();
+    }
+  }, [profile.favorites, cats]);
 
   const [userSubmissions, setUserSubmissions] = useState<any[]>([]);
   const [userCheckIns, setUserCheckIns] = useState<any[]>([]);
@@ -246,6 +281,48 @@ export default function AccountPage() {
                   return { ...p, pets: Array.from(petMap.values()) };
                 });
               }
+
+              // Fetch User Document and Managed Hubs
+              const { doc, getDoc } = await import('firebase/firestore');
+              const userDocRef = doc(db, 'users', user.uid);
+              const userDoc = await getDoc(userDocRef);
+              let boundHubIds: string[] = [];
+
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                if (userData.bound_hub_id && Array.isArray(userData.bound_hub_id)) {
+                  boundHubIds = userData.bound_hub_id;
+                } else if (userData.role) {
+                  setProfile(p => ({ ...p, role_preference: userData.role }));
+                }
+              }
+
+              try {
+                const hubsQueryId = query(collection(db, 'hubs'), where('picId', '==', user.uid));
+                const hubsSnapId = await getDocs(hubsQueryId);
+                hubsSnapId.forEach(hubDoc => {
+                  if (!boundHubIds.includes(hubDoc.id)) {
+                    boundHubIds.push(hubDoc.id);
+                  }
+                });
+
+                if (user.email) {
+                  const hubsQueryEmail = query(collection(db, 'hubs'), where('picEmail', '==', user.email));
+                  const hubsSnapEmail = await getDocs(hubsQueryEmail);
+                  hubsSnapEmail.forEach(hubDoc => {
+                    if (!boundHubIds.includes(hubDoc.id)) {
+                      boundHubIds.push(hubDoc.id);
+                    }
+                  });
+                }
+              } catch (e) {
+                console.error("Error fetching hubs by picId", e);
+              }
+
+              if (boundHubIds.length > 0) {
+                 setProfile(p => ({ ...p, bound_hub_id: boundHubIds }));
+              }
+
             } catch(e) {
               console.error("Failed to fetch pets", e);
             }
@@ -700,12 +777,11 @@ export default function AccountPage() {
   };
 
   const localUserCats = cats.filter((c) => c.submittedBy === (user?.uid || "anonymous"));
-  const allSubs = [...userSubmissions];
+  const allSubsMap = new Map<string, any>(userSubmissions.map(s => [s.id, s]));
   localUserCats.forEach(lc => {
-    if (!allSubs.find(s => s.id === lc.id)) {
-      allSubs.push(lc);
-    }
+    allSubsMap.set(lc.id, { ...(allSubsMap.get(lc.id) || {}), ...lc });
   });
+  const allSubs = Array.from(allSubsMap.values());
   const firstStrayImage = allSubs.find(s => s.imageUrl)?.imageUrl;
   const firstPetImage = profile.pets?.[0]?.photoDataUrl;
   const firstCheckInImage = userCheckIns.find(c => c.imageUrl)?.imageUrl;
@@ -906,14 +982,28 @@ export default function AccountPage() {
               </button>
             </div>
 
+            <div className="mb-4">
+              <input
+                type="text"
+                placeholder="Search by name..."
+                value={subTabSearchQuery}
+                onChange={(e) => setSubTabSearchQuery(e.target.value)}
+                className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm outline-none focus:border-orange-500"
+              />
+            </div>
+
             {subTab === "submissions" && (() => {
               const localUserCats = cats.filter((c) => c.submittedBy === (user?.uid || "anonymous"));
-              const allSubs = [...userSubmissions];
+              const allSubsMap = new Map<string, any>(userSubmissions.map(s => [s.id, s]));
               localUserCats.forEach(lc => {
-                if (!allSubs.find(s => s.id === lc.id)) {
-                  allSubs.push(lc);
-                }
+                allSubsMap.set(lc.id, { ...(allSubsMap.get(lc.id) || {}), ...lc });
               });
+              let allSubs = Array.from(allSubsMap.values());
+              if (subTabSearchQuery.trim()) {
+                allSubs = allSubs.filter(cat => (cat.name || `Straykin #${cat.id.slice(-4)}`).toLowerCase().includes(subTabSearchQuery.toLowerCase()));
+              }
+              const totalPages = Math.ceil(allSubs.length / itemsPerPage);
+              const paginatedSubs = allSubs.slice((subTabCurrentPage - 1) * itemsPerPage, subTabCurrentPage * itemsPerPage);
 
               return (
               <>
@@ -944,72 +1034,108 @@ export default function AccountPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {allSubs
-                      .map((cat) => (
-                        <button
-                          key={cat.id}
-                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
-                          className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
-                        >
-                          <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
-                            {cat.imageUrl ? (
-                              <img
-                                src={cat.imageUrl}
-                                className={`w-full h-full object-cover ${cat.status === "rejected" ? "grayscale opacity-60" : ""}`}
-                              />
-                            ) : (
-                              <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">
-                                😿
+                    {paginatedSubs
+                      .map((cat, index) => (
+                        <React.Fragment key={cat.id}>
+                          <button
+                            onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
+                            className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
+                          >
+                            <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
+                              {cat.imageUrl ? (
+                                <img
+                                  src={cat.imageUrl}
+                                  className={`w-full h-full object-cover ${cat.status === "rejected" ? "grayscale opacity-60" : ""}`}
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">
+                                  😿
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-col min-w-0 pr-2">
+                                  <span className="text-[10px] font-black uppercase tracking-wider mb-0.5 text-slate-500">
+                                    {cat.animalType || "CAT"}
+                                  </span>
+                                  <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
+                                    {cat.name || `Straykin #${cat.id.slice(-4)}`}
+                                  </h3>
+                                </div>
+                                <div className="flex flex-col items-end shrink-0 gap-1">
+                                  {cat.status === "under_review" && (
+                                    <span className="bg-amber-100 text-amber-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
+                                      Review
+                                    </span>
+                                  )}
+                                  {cat.status === "rejected" && (
+                                    <span className="bg-rose-100 text-rose-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
+                                      Rejected
+                                    </span>
+                                  )}
+                                  {cat.status === "approved" && (
+                                    <span className="bg-emerald-100 text-emerald-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
+                                      Approved
+                                    </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <p className="text-xs text-slate-500 font-medium mt-1">
+                                  Last check-in:{" "}
+                                  {cat.last_check_in?.timestamp
+                                    ? new Date(
+                                        (cat.last_check_in.timestamp as any)
+                                          ?.seconds * 1000,
+                                      ).toLocaleDateString()
+                                    : "Unknown"}
+                                </p>
+                              </div>
+                            </button>
+                            {index === 2 && (
+                              <div className="w-full h-[90px] overflow-hidden my-2 border border-slate-100 rounded-xl bg-slate-50">
+                                <AdBanner format="homeBanner" />
                               </div>
                             )}
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col justify-center">
-                            <div className="flex items-center justify-between">
-                              <div className="flex flex-col min-w-0 pr-2">
-                                <span className="text-[10px] font-black uppercase tracking-wider mb-0.5 text-slate-500">
-                                  {cat.animalType || "CAT"}
-                                </span>
-                                <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
-                                  {cat.name || `Straykin #${cat.id.slice(-4)}`}
-                                </h3>
-                              </div>
-                              <div className="flex flex-col items-end shrink-0 gap-1">
-                                {cat.status === "under_review" && (
-                                  <span className="bg-amber-100 text-amber-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
-                                    Review
-                                  </span>
-                                )}
-                                {cat.status === "rejected" && (
-                                  <span className="bg-rose-100 text-rose-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
-                                    Rejected
-                                  </span>
-                                )}
-                                {cat.status === "approved" && (
-                                  <span className="bg-emerald-100 text-emerald-700 text-[9px] uppercase font-black px-2 py-0.5 rounded-full whitespace-nowrap">
-                                    Approved
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <p className="text-xs text-slate-500 font-medium mt-1">
-                              Last check-in:{" "}
-                              {cat.last_check_in?.timestamp
-                                ? new Date(
-                                    (cat.last_check_in.timestamp as any)
-                                      ?.seconds * 1000,
-                                  ).toLocaleDateString()
-                                : "Unknown"}
-                            </p>
-                          </div>
-                        </button>
+                          </React.Fragment>
                       ))}
+                  </div>
+                )}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 mt-6">
+                    <button
+                      onClick={() => setSubTabCurrentPage(Math.max(1, subTabCurrentPage - 1))}
+                      disabled={subTabCurrentPage === 1}
+                      className="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 disabled:opacity-50"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-bold text-slate-500">
+                      {subTabCurrentPage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setSubTabCurrentPage(Math.min(totalPages, subTabCurrentPage + 1))}
+                      disabled={subTabCurrentPage === totalPages}
+                      className="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
               </>
               );
             })()}
 
-            {subTab === "favorites" && (
+            {subTab === "favorites" && (() => {
+               const combinedCats = [...cats, ...fetchedFavCats.filter(fc => !cats.find(c => c.id === fc.id))];
+               let favCats = combinedCats.filter((c) => profile.favorites?.includes(c.id));
+               if (subTabSearchQuery.trim()) {
+                 favCats = favCats.filter(cat => (cat.name || `Straykin #${cat.id.slice(-4)}`).toLowerCase().includes(subTabSearchQuery.toLowerCase()));
+               }
+               const totalPages = Math.ceil(favCats.length / itemsPerPage);
+               const paginatedFavs = favCats.slice((subTabCurrentPage - 1) * itemsPerPage, subTabCurrentPage * itemsPerPage);
+
+               return (
               <>
                 {!profile.favorites || profile.favorites.length === 0 ? (
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-5 text-center text-slate-500 font-medium text-sm">
@@ -1017,59 +1143,110 @@ export default function AccountPage() {
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {cats
-                      .filter((c) => profile.favorites?.includes(c.id))
-                      .map((cat) => (
-                        <button
-                          key={cat.id}
-                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
-                          className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
-                        >
-                          <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
-                            {cat.imageUrl ? (
-                              <img
-                                src={cat.imageUrl}
-                                className={`w-full h-full object-cover`}
-                              />
-                            ) : (
-                              <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">
-                                😿
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0 flex flex-col justify-center">
-                            <div className="flex items-center justify-between">
-                              <div className="flex flex-col min-w-0 pr-2">
-                                <span className="text-[10px] font-black uppercase tracking-wider mb-0.5 text-slate-500">
-                                  {cat.animalType || "CAT"}
-                                </span>
-                                <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
-                                  {cat.name || `Straykin #${cat.id.slice(-4)}`}
-                                </h3>
-                              </div>
+                    {paginatedFavs
+                      .map((cat, index) => (
+                        <React.Fragment key={cat.id}>
+                          <button
+                            onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
+                            className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
+                          >
+                            <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
+                              {cat.imageUrl ? (
+                                <img
+                                  src={cat.imageUrl}
+                                  className={`w-full h-full object-cover`}
+                                />
+                              ) : (
+                                <div className="w-full h-full bg-slate-100 flex items-center justify-center text-2xl">
+                                  😿
+                                </div>
+                              )}
                             </div>
-                            <p className="text-xs text-slate-500 font-medium mt-1">
-                              Last check-in:{" "}
-                              {cat.last_check_in?.timestamp
-                                ? new Date(
-                                    (cat.last_check_in.timestamp as any)
-                                      ?.seconds * 1000,
-                                  ).toLocaleDateString()
-                                : "Unknown"}
-                            </p>
-                          </div>
-                        </button>
+                            <div className="flex-1 min-w-0 flex flex-col justify-center">
+                              <div className="flex items-center justify-between">
+                                <div className="flex flex-col min-w-0 pr-2">
+                                  <span className="text-[10px] font-black uppercase tracking-wider mb-0.5 text-slate-500">
+                                    {cat.animalType || "CAT"}
+                                  </span>
+                                  <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
+                                    {cat.name || `Straykin #${cat.id.slice(-4)}`}
+                                  </h3>
+                                </div>
+                              </div>
+                              <p className="text-xs text-slate-500 font-medium mt-1">
+                                Last check-in:{" "}
+                                {cat.last_check_in?.timestamp
+                                  ? new Date(
+                                      (cat.last_check_in.timestamp as any)
+                                        ?.seconds * 1000,
+                                    ).toLocaleDateString()
+                                  : "Unknown"}
+                              </p>
+                            </div>
+                          </button>
+                          {index === 2 && (
+                            <div className="w-full h-[90px] overflow-hidden my-2 border border-slate-100 rounded-xl bg-slate-50">
+                              <AdBanner format="homeBanner" />
+                            </div>
+                          )}
+                        </React.Fragment>
                       ))}
                   </div>
                 )}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 mt-6">
+                    <button
+                      onClick={() => setSubTabCurrentPage(Math.max(1, subTabCurrentPage - 1))}
+                      disabled={subTabCurrentPage === 1}
+                      className="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 disabled:opacity-50"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-xs font-bold text-slate-500">
+                      {subTabCurrentPage} / {totalPages}
+                    </span>
+                    <button
+                      onClick={() => setSubTabCurrentPage(Math.min(totalPages, subTabCurrentPage + 1))}
+                      disabled={subTabCurrentPage === totalPages}
+                      className="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-100 text-slate-600 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
               </>
-            )}
+              );
+            })()}
           </div>
         )}
 
         {/* Account Tab */}
         {activeTab === "account" && (
           <div className="space-y-6">
+            {profile.bound_hub_id && profile.bound_hub_id.length > 0 && user && (
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-orange-200 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-orange-50 rounded-bl-full -z-0"></div>
+                <div className="relative z-10">
+                  <h3 className="text-lg font-black text-slate-900 mb-1">
+                    Hub Management
+                  </h3>
+                  <p className="text-xs font-bold text-slate-500 mb-5">
+                    Manage your shelter or organization
+                  </p>
+                  <button
+                    onClick={() => setActiveTab("hub_manager")}
+                    className="w-full flex items-center justify-between p-4 bg-orange-500 hover:bg-orange-600 rounded-xl transition-colors text-white font-bold"
+                  >
+                    <div className="flex items-center gap-3">
+                      <CustomIcon src="/icon-hub.png" FallbackIcon={MapPin} className="w-5 h-5 filter brightness-0 invert" />
+                      <span>Hub Setting</span>
+                    </div>
+                    <ExternalLink className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-slate-200">
               <h3 className="text-lg font-black text-slate-900 leading-tight mb-6">
                 Profile Settings
@@ -1247,61 +1424,27 @@ export default function AccountPage() {
               ) : null}
 
               <div className="grid grid-cols-3 gap-y-6 gap-x-2">
-                {renderBadge(
-                  "pawtrainee",
-                  "Pawtrainee",
-                  "Registered",
-                  "checkins",
-                  0,
-                )}
-                {renderBadge(
-                  "pawrent",
-                  "Pawrent",
-                  "1 Stray",
-                  "strays",
-                  1,
-                )}
-                {renderBadge(
-                  "stray_savior",
-                  "Stray Savior",
-                  "5 Strays",
-                  "strays",
-                  5,
-                )}
-                {renderBadge(
-                  "cat_whisperer",
-                  "Cat Whisperer",
-                  "10 Strays",
-                  "strays",
-                  10,
-                )}
-                {renderBadge(
-                  "good_samaritan",
-                  "Samaritan",
-                  "1 Check-in",
-                  "checkins",
-                  1,
-                )}
-                {renderBadge(
-                  "reliable_feeder",
-                  "Feeder",
-                  "10 Check-ins",
-                  "checkins",
-                  10,
-                )}
-                {renderBadge(
-                  "neighborhood_guardian",
-                  "Guardian",
-                  "50 Check-ins",
-                  "checkins",
-                  50,
-                )}
+                {settings.achievements.map(badge => (
+                  <React.Fragment key={badge.id}>
+                    {renderBadge(
+                      badge.id,
+                      badge.title,
+                      badge.description,
+                      badge.type,
+                      badge.threshold
+                    )}
+                  </React.Fragment>
+                ))}
               </div>
             </div>
           </div>
         )}
 
         {/* Other Tab */}
+        {activeTab === "hub_manager" && profile.bound_hub_id && profile.bound_hub_id.length > 0 && user && (
+          <HubManager hubId={profile.bound_hub_id[0]} userId={user.uid} onClose={() => setActiveTab("account")} />
+        )}
+
         {activeTab === "other" && (
           <div className="space-y-4">
             <div className="bg-white rounded-[2rem] p-4 shadow-sm border border-slate-200">

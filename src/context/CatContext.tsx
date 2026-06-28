@@ -82,20 +82,8 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
                   mapData.delete(change.doc.id);
                }
                
-               if (!initialLoad && Notification.permission === "granted") {
-                 if (change.type === "added" && cat.status === "approved") {
-                   new Notification("New Stray in Area", {
-                     body: `A stray named ${cat.name || "Unknown"} was just added!`,
-                     icon: cat.imageUrl || "/favicon.png",
-                   });
-                 }
-                 if (change.type === "modified" && cat.status === "approved" && cat.submissionId) {
-                   new Notification("Submission Approved!", {
-                     body: `Your submission for ${cat.name || "a stray"} has been approved by the system.`,
-                     icon: cat.imageUrl || "/favicon.png",
-                   });
-                 }
-               }
+               // Push notifications now handle these asynchronously.
+               // We disable local browser Notifications here to prevent spam.
             });
             
             setCats(Array.from(mapData.values()));
@@ -176,14 +164,78 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
   const findNearbyCats = async (
     lat: number,
     lng: number,
-    radiusInM: number = 50,
+    radiusInM: number = 500,
   ) => {
     const center = [lat, lng] as [number, number];
-    return cats.filter((cat) => {
-      if (cat.status !== "approved") return false;
-      const dist = distanceBetween([cat.lat, cat.lng], center) * 1000;
-      return dist <= radiusInM;
-    });
+    try {
+      const { geohashQueryBounds, distanceBetween } = await import("geofire-common");
+      const { collection, query, where, orderBy, getDocs } = await import("firebase/firestore");
+      const { db } = await import("../config/firebase");
+      
+      const bounds = geohashQueryBounds(center, radiusInM);
+      const promises = bounds.map((b) => {
+        const q = query(
+          collection(db, "strays"),
+          orderBy("geohash"),
+          where("geohash", ">=", b[0]),
+          where("geohash", "<=", b[1])
+        );
+        return getDocs(q);
+      });
+      
+      const snapshots = await Promise.all(promises);
+      const nearby: CatRecord[] = [];
+      
+      snapshots.forEach((snap) => {
+        snap.docs.forEach((doc) => {
+          const cat = doc.data() as CatRecord;
+          if (cat.status !== "approved") return;
+          const dist = distanceBetween([cat.lat, cat.lng], center) * 1000;
+          if (dist <= radiusInM) {
+            nearby.push({ id: doc.id, ...cat });
+          }
+        });
+      });
+      
+      // also check public/lost pets
+      const qPets = query(collection(db, "pets"), where("status", "in", ["public", "lost"]));
+      const petsSnap = await getDocs(qPets);
+      petsSnap.docs.forEach(doc => {
+        const pet = doc.data() as any;
+        if (pet.lat && pet.lng) {
+          const dist = distanceBetween([pet.lat, pet.lng], center) * 1000;
+          if (dist <= radiusInM) {
+             nearby.push({
+               id: doc.id,
+               name: pet.name,
+               animalType: pet.species,
+               genderVotes: { male: pet.gender === "Male" ? 1 : 0, female: pet.gender === "Female" ? 1 : 0, unknown: pet.gender === "Unknown" ? 1 : 0 },
+               lat: pet.lat,
+               lng: pet.lng,
+               geohash: pet.geohash,
+               status: "approved",
+               submittedBy: pet.ownerId,
+               createdAt: pet.createdAt,
+               imageUrl: pet.photoDataUrl,
+               last_check_in: {
+                 timestamp: pet.createdAt || Date.now(),
+                 was_fed: false
+               }
+             });
+          }
+        }
+      });
+      
+      return nearby;
+    } catch(e) {
+      console.error(e);
+      // Fallback to memory array
+      return cats.filter((cat) => {
+        if (cat.status !== "approved") return false;
+        const dist = distanceBetween([cat.lat, cat.lng], center) * 1000;
+        return dist <= radiusInM;
+      });
+    }
   };
 
   const logNewSighting = async (
@@ -194,13 +246,22 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     forceCreate: boolean = false,
   ) => {
     if (!forceCreate) {
-      const nearby = await findNearbyCats(lat, lng, 50);
+      const nearby = await findNearbyCats(lat, lng, 500);
       if (nearby.length > 0) {
         return { duplicatesFound: nearby, status: "duplicates_found" };
       }
     }
 
     try {
+      const { doc, setDoc, getDoc } = await import("firebase/firestore");
+      let autoApprove = false;
+      try {
+        const globalSettingsDoc = await getDoc(doc(db, "settings", "global"));
+        autoApprove = !!globalSettingsDoc.data()?.autoApproveSubmissions;
+      } catch (err) {
+        console.warn("Could not fetch global settings, autoApprove defaulting to false.");
+      }
+      const docRef = doc(collection(db, "strays"));
       const newCatData = {
         lat,
         lng,
@@ -213,9 +274,11 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
           unknown: details.gender === "Unknown" ? 1 : 0,
         },
         imageUrl: details.photoDataUrl || null,
-        status: details.status || "under_review",
+        status: details.status || (autoApprove ? "approved" : "under_review"),
         submissionId: details.submissionId || null,
         submittedBy: details.submittedBy || null,
+        hub_id: details.hub_id || null,
+        isResidentPet: details.isResidentPet || false,
         locationName: details.locationName || null,
         characteristics: details.tags
           ? details.tags.map((t: string) => ({ tag: t, votes: 1 }))
@@ -227,7 +290,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
           notes: details.notes || null,
         },
       };
-      const docRef = await addDoc(collection(db, "strays"), newCatData);
+      await setDoc(docRef, newCatData);
 
       return { status: "created", id: docRef.id };
     } catch (e) {
@@ -238,15 +301,23 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
 
   const addCheckInLog = async (details: any) => {
     try {
-      const { collection, addDoc, serverTimestamp } = await import("firebase/firestore");
-      const docRef = await addDoc(collection(db, "check_ins"), {
+      const { collection, doc, setDoc, getDoc, serverTimestamp } = await import("firebase/firestore");
+      let autoApprove = false;
+      try {
+        const globalSettingsDoc = await getDoc(doc(db, "settings", "global"));
+        autoApprove = !!globalSettingsDoc.data()?.autoApproveSubmissions;
+      } catch (err) {
+        console.warn("Could not fetch global settings, autoApprove defaulting to false.");
+      }
+      const docRef = doc(collection(db, "check_ins"));
+      await setDoc(docRef, {
         catId: details.catId,
         wasFed: details.wasFed || false,
         healthStatus: details.healthStatus || "Good",
         geo_point: details.geo_point || null,
         photoDataUrl: details.photoDataUrl || null,
         addToGallery: details.addToGallery || false,
-        status: details.status || "under_review",
+        status: details.status || (autoApprove ? "approved" : "under_review"),
         submissionId: details.submissionId || null,
         submittedBy: details.submittedBy || null,
         timestamp: serverTimestamp(),
@@ -261,9 +332,15 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
   const updateCatSighting = async (catId: string, details: any) => {
     try {
       const { doc, getDoc, updateDoc } = await import("firebase/firestore");
-      const docRef = doc(db, "strays", catId);
-      const catSnap = await getDoc(docRef);
-      if (!catSnap.exists()) return { status: "not_found" };
+      let docRef = doc(db, "strays", catId);
+      let catSnap = await getDoc(docRef);
+      let isPet = false;
+      if (!catSnap.exists()) {
+         docRef = doc(db, "pets", catId);
+         catSnap = await getDoc(docRef);
+         if (!catSnap.exists()) return { status: "not_found" };
+         isPet = true;
+      }
       const catData = catSnap.data();
 
       const updateData: any = {
@@ -271,6 +348,9 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
       };
 
       if (details.name) updateData.name = details.name;
+      if (details.gender) {
+         updateData["genderVotes." + details.gender.toLowerCase()] = (catData.genderVotes?.[details.gender.toLowerCase()] || 0) + 1;
+      }
       if (details.status) updateData.status = details.status;
       if (details.submissionId) updateData.submissionId = details.submissionId;
       if (details.photoDataUrl && !details.isCheckIn) updateData.imageUrl = details.photoDataUrl;
@@ -292,23 +372,25 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         details.photoDataUrl &&
         details.status === "approved"
       ) {
-        newGallery.push({
-          id: Date.now().toString(),
-          url: details.photoDataUrl,
-          timestamp: Date.now(),
-          votes: 0,
-          submittedBy: details.submittedBy,
-        });
-        // Sort by votes descending, then timestamp descending
-        newGallery.sort(
-          (a, b) => b.votes - a.votes || b.timestamp - a.timestamp,
-        );
-        // Keep max 10
-        if (newGallery.length > 10) {
-          newGallery = newGallery.slice(0, 10);
+        if (!newGallery.find(g => g.url === details.photoDataUrl)) {
+            newGallery.push({
+              id: Date.now().toString(),
+              url: details.photoDataUrl,
+              timestamp: Date.now(),
+              votes: 0,
+              submittedBy: details.submittedBy,
+            });
+            // Sort by votes descending, then timestamp descending
+            newGallery.sort(
+              (a, b) => b.votes - a.votes || b.timestamp - a.timestamp,
+            );
+            // Keep max 10
+            if (newGallery.length > 10) {
+              newGallery = newGallery.slice(0, 10);
+            }
+            updateData.gallery = newGallery;
+            galleryUpdated = true;
         }
-        updateData.gallery = newGallery;
-        galleryUpdated = true;
       }
 
       await updateDoc(docRef, updateData);
@@ -320,6 +402,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
             ? {
                 ...c,
                 name: details.name || c.name,
+                imageUrl: catData?.imageUrl || c.imageUrl, // fetch newest URL if it originated from backend proxy
                 ...(details.status
                   ? {
                       status: details.status,
@@ -369,7 +452,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
   ) => {
     try {
       const { doc, updateDoc } = await import("firebase/firestore");
-      const docRef = doc(db, "strays", catId);
+      let docRef = doc(db, "strays", catId);
 
       const updateData: any = {};
       if (payload.names) updateData.names = payload.names;
@@ -381,8 +464,20 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         updateData.inviteCode = payload.inviteCode;
       if (payload.caretakers !== undefined)
         updateData.caretakers = payload.caretakers;
+      if (payload.color !== undefined) updateData.color = payload.color;
+      if (payload.strayType !== undefined) updateData.strayType = payload.strayType;
+      if (payload.isNeutered !== undefined) updateData.isNeutered = payload.isNeutered;
 
-      await updateDoc(docRef, updateData);
+      try {
+        await updateDoc(docRef, updateData);
+      } catch (e: any) {
+        if (e.code === 'not-found') {
+          docRef = doc(db, "pets", catId);
+          await updateDoc(docRef, updateData);
+        } else {
+          throw e;
+        }
+      }
 
       setCats((prev) =>
         prev.map((c) => (c.id === catId ? { ...c, ...payload } : c)),

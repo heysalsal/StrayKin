@@ -8,6 +8,60 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="apple-touch-icon" href="/favicon.png" />
+    <script>
+      /**
+       * Straykin PWA Environment & Monetization Handler
+       * Executes early (Head) to prevent race conditions or UI flashing.
+       */
+      (function() {
+        try {
+          // 1. Native App Environment Detection
+          var isNativeAndroidBridge = window.AndroidLauncher && typeof window.AndroidLauncher.isNativeApp === 'function' && window.AndroidLauncher.isNativeApp();
+          var isNativeAndroidUserAgent = navigator.userAgent.includes("StraykinAndroidApp");
+          var isNativeAndroid = isNativeAndroidBridge || isNativeAndroidUserAgent;
+
+          // Detect OS
+          var userAgent = navigator.userAgent || navigator.vendor || window.opera;
+          var isIOS = /iPad|iPhone|iPod/.test(userAgent) && !window.MSStream;
+          var isWindows = /Win/.test(userAgent);
+          var isMac = /Mac/.test(userAgent) && !isIOS;
+          var isAndroid = /android/i.test(userAgent);
+
+          // 3. iOS & Desktop Exclusion
+          if (isIOS || isWindows || isMac) {
+             // Let the PWA load fully and normally
+          } else if (isAndroid && !isNativeAndroid) {
+            // 2. Smart Android Redirection Flow
+            // Redirect pure mobile browser users on Android to Play Store
+            // TODO: Uncomment when Android app is live in Play Store
+            // window.location.replace("https://play.google.com/store/apps/details?id=com.yourcompany.straykin");
+            // return;
+          }
+
+          // 4. Dynamic Hybrid Monetization Engine
+          document.addEventListener("DOMContentLoaded", function() {
+            if (isNativeAndroid) {
+              // App environment: hide dom container wrappers for web ads
+              var adContainer = document.getElementById('web-ad-container');
+              if (adContainer) {
+                adContainer.style.display = 'none';
+              }
+              window.__NATIVE_APP__ = true;
+            } else {
+              window.__NATIVE_APP__ = false;
+              // Browser environment: dynamically load Adterra script
+              var adScript = document.createElement('script');
+              // Replace with your actual adterra script URL
+              adScript.src = '//pl22345678.variousadnetwork.com/invoke.js'; 
+              adScript.async = true;
+              document.head.appendChild(adScript);
+            }
+          });
+        } catch (e) {
+          console.error("Environment handler error:", e);
+        }
+      })();
+    </script>
     <title>Straykin - No Stray Left Behind</title>
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-2H2PLDDV4L"></script>

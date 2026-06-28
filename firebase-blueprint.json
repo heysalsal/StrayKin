@@ -1,5 +1,44 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with roles and hub bindings",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string" },
+        "bound_hub_id": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Hub": {
+      "title": "Hub",
+      "description": "A physical location / shelter hub",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "address": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "photoUrl": { "type": "string" },
+        "socialMediaUrls": { "type": "array", "items": { "type": "string" } },
+        "managerIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Pet": {
+      "title": "Pet",
+      "description": "A pet bound to a user or a hub",
+      "type": "object",
+      "properties": {
+        "hub_id": { "type": "string" },
+        "name": { "type": "string" },
+        "age": { "type": "string" },
+        "breed": { "type": "string" },
+        "status": { "type": "string" },
+        "photoDataUrl": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "caretakers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "CatRecord": {
       "title": "CatRecord",
       "description": "Details about a stray cat",
@@ -27,6 +66,18 @@
     }
   },
   "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "/hubs/{hubId}": {
+      "schema": { "$ref": "#/entities/Hub" },
+      "description": "Physical hubs/shelters"
+    },
+    "/pets/{petId}": {
+      "schema": { "$ref": "#/entities/Pet" },
+      "description": "Pets in hubs or owned by users"
+    },
     "/strays/{strayId}": {
       "schema": { "$ref": "#/entities/CatRecord" },
       "description": "Stray animals logged in the app"

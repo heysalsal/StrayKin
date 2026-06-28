@@ -22,10 +22,35 @@ export function useLazyAuth() {
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
-    // Listen to auth state
+    // 1. Initial check
+    if (auth.currentUser) {
+        setUser(auth.currentUser);
+        setLoading(false);
+    }
+
+    // 2. Listen to auth state changes
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setLoading(false);
+      
+      // Update user in Firestore
+      if (currentUser && !currentUser.isAnonymous) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          
+          await setDoc(doc(db, 'users', currentUser.uid), {
+            uid: currentUser.uid,
+            email: currentUser.email || null,
+            displayName: currentUser.displayName || null,
+            photoURL: currentUser.photoURL || null,
+            isAnonymous: currentUser.isAnonymous,
+            lastLoginAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (err) {
+          console.error("Failed to record user in Firestore:", err);
+        }
+      }
     });
 
     return () => unsubscribe();
@@ -73,6 +98,22 @@ export function useLazyAuth() {
     try {
       const result = await linkWithPopup(auth.currentUser, provider);
       setUser(result.user);
+      
+      try {
+        const { doc, setDoc } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        await setDoc(doc(db, 'users', result.user.uid), {
+          uid: result.user.uid,
+          email: result.user.email || null,
+          displayName: result.user.displayName || null,
+          photoURL: result.user.photoURL || null,
+          isAnonymous: result.user.isAnonymous,
+          lastLoginAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        console.error("Failed to record user in Firestore after Google link:", err);
+      }
+      
       return result.user;
     } catch (err: any) {
       console.error("Failed to link Google account", err);
@@ -90,6 +131,22 @@ export function useLazyAuth() {
       await updateProfile(result.user, { displayName });
       await sendEmailVerification(result.user);
       setUser(result.user);
+      
+      try {
+        const { doc, setDoc } = await import('firebase/firestore');
+        const { db } = await import('../config/firebase');
+        await setDoc(doc(db, 'users', result.user.uid), {
+          uid: result.user.uid,
+          email: result.user.email || null,
+          displayName: displayName || null,
+          photoURL: result.user.photoURL || null,
+          isAnonymous: result.user.isAnonymous,
+          lastLoginAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (err) {
+        console.error("Failed to record user in Firestore during registration:", err);
+      }
+      
       return { user: result.user, needsVerification: true };
     } catch (err) {
       throw err;
@@ -100,6 +157,24 @@ export function useLazyAuth() {
     try {
       const result = await signInWithEmailAndPassword(auth, email, pin);
       setUser(result.user);
+      
+      if (!result.user.isAnonymous) {
+        try {
+          const { doc, setDoc } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          await setDoc(doc(db, 'users', result.user.uid), {
+            uid: result.user.uid,
+            email: result.user.email || null,
+            displayName: result.user.displayName || null,
+            photoURL: result.user.photoURL || null,
+            isAnonymous: result.user.isAnonymous,
+            lastLoginAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (err) {
+          console.error("Failed to update user in Firestore during login:", err);
+        }
+      }
+      
       return { user: result.user, needsVerification: !result.user.emailVerified };
     } catch (err) {
       throw err;

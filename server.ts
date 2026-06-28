@@ -1,10 +1,10 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import TelegramBot from "node-telegram-bot-api";
 import fs from "fs";
+import TelegramBot from "node-telegram-bot-api";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, updateDoc, getDoc } from "firebase/firestore";
+import { getFirestore, doc, updateDoc, getDoc, collection, query as fsQuery, where, getDocs, setDoc } from "firebase/firestore";
 
 const app = express();
 const PORT = 3000;
@@ -18,19 +18,28 @@ try {
   if (fs.existsSync(configPath)) {
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
     const firebaseApp = initializeApp(config);
-    db = getFirestore(firebaseApp, config.firestoreDatabaseId || "(default)");
+    const dbId = "ai-studio-a8824e8c-cfd8-459c-ba28-c6aad4888a4d";
+    db = getFirestore(firebaseApp, dbId);
   }
 } catch (e) {
   console.error("Failed to initialize firebase in server", e);
 }
 
+// Bunny.net config extraction
 async function uploadToBunny(imageBase64: string): Promise<string | null> {
   try {
-    const accessKey =
-      process.env.BUNNY_API_KEY ||
-      "eea8fffd-53b3-4080-bd99-3ef5d83ff9a13aaa1ec7-053b-4797-a824-e818158032e8";
+    const accessKey = process.env.BUNNY_API_KEY;
+    if (!accessKey) {
+        console.warn("[Bunny] BUNNY_API_KEY is not defined. Skipping upload.");
+        return null;
+    }
     const zoneName = process.env.BUNNY_ZONE_NAME || "straykin";
     let region = process.env.BUNNY_REGION || "";
+    
+    // Clean up user input if they pasted a full URL
+    region = region.replace(/^https?:\/\//, "");
+    region = region.split("/")[0];
+
     let storageDomain = "storage.bunnycdn.com";
 
     if (region.includes("storage.bunnycdn.com")) {
@@ -59,6 +68,10 @@ async function uploadToBunny(imageBase64: string): Promise<string | null> {
       return `https://straykin.b-cdn.net/images/${fileName}`;
     } else {
       const respText = await response.text();
+      if (response.status === 401) {
+         console.warn("[Review] Bunny API Key incorrect or missing. Falling back to Firestore storage.");
+         return null;
+      }
       console.error("Bunny upload failed:", respText);
       return null;
     }
@@ -68,10 +81,81 @@ async function uploadToBunny(imageBase64: string): Promise<string | null> {
   }
 }
 
-async function handleSubmissionApproval(db: any, id: string, action: string, imageUrl?: string) {
+async function handleSubmissionApproval(db: any, id: string, action: string, imageUrl?: string, docIdForReview?: string, type?: string, details?: any) {
     try {
-      const { collection, query: fsQuery, where, getDocs, getDoc, updateDoc, doc } = await import("firebase/firestore");
-      
+      // If we have docIdForReview, forcefully update the status
+      if (docIdForReview) {
+          const collName = type === "check_in" ? "check_ins" : (type === "hub_proposal" ? "hubs" : "strays");
+          
+          let updatePayload: any = { status: action === "approve" ? "approved" : "rejected" };
+          
+          if (imageUrl && action === "approve") {
+              if (collName === "strays") updatePayload.imageUrl = imageUrl;
+              else if (collName === "check_ins") { updatePayload.photoDataUrl = imageUrl; updatePayload.imageUrl = imageUrl; }
+              else if (collName === "hubs") updatePayload.photoUrl = imageUrl;
+          }
+          
+          await setDoc(doc(db, collName, docIdForReview), updatePayload, { merge: true });
+
+          // Also update the parent stray or pet if it was a check_in
+          if (type === "check_in" && details?.catId && action === "approve") {
+              const catUpdate: any = { 
+                  status: "approved",
+              };
+              
+              const nowSeconds = Math.floor(Date.now() / 1000);
+              catUpdate["last_check_in.timestamp"] = { seconds: nowSeconds, nanoseconds: 0, _seconds: nowSeconds, _nanoseconds: 0 };
+              
+              if (details.wasFed !== undefined) catUpdate["last_check_in.was_fed"] = details.wasFed;
+              
+              if (details.activities && Array.isArray(details.activities)) {
+                  catUpdate["last_check_in.activities"] = details.activities;
+              } else {
+                  const acts = [];
+                  if (details.wasFed) acts.push("Feed");
+                  if (acts.length > 0) catUpdate["last_check_in.activities"] = acts;
+              }
+
+              if (details.notes) {
+                  catUpdate["last_check_in.notes"] = details.notes;
+              } else if (details.healthStatus && details.healthStatus !== "Good") {
+                  catUpdate["last_check_in.notes"] = details.healthStatus;
+              }
+
+              let catRef = doc(db, "strays", details.catId);
+              try {
+                  let catSnap = await getDoc(catRef);
+                  if (!catSnap.exists()) {
+                      catRef = doc(db, "pets", details.catId);
+                      catSnap = await getDoc(catRef);
+                  }
+                  if (catSnap.exists()) {
+                      const catData = catSnap.data();
+                      if (details.addToGallery && imageUrl) {
+                          let newGallery = [...(catData.gallery || [])];
+                          if (!newGallery.find(g => g.url === imageUrl)) {
+                              newGallery.push({
+                                  id: Date.now().toString(),
+                                  url: imageUrl,
+                                  timestamp: Date.now(),
+                                  votes: 0,
+                                  submittedBy: details.submittedBy || 'anonymous'
+                              });
+                              newGallery.sort((a: any, b: any) => b.votes - a.votes || b.timestamp - a.timestamp);
+                              if (newGallery.length > 10) newGallery = newGallery.slice(0, 10);
+                              catUpdate.gallery = newGallery;
+                          }
+                      }
+                  }
+                  await updateDoc(catRef, catUpdate);
+              } catch (e: any) {
+                  // Fallback
+                  try { await updateDoc(doc(db, "strays", details.catId), catUpdate); } catch(e2){}
+              }
+          }
+      }
+
+      // Query-based fallback/supplement just in case
       // Update in strays
       const straysQ = fsQuery(collection(db, "strays"), where("submissionId", "==", id));
       const straysSnap = await getDocs(straysQ);
@@ -110,27 +194,38 @@ async function handleSubmissionApproval(db: any, id: string, action: string, ima
                  if (d.healthStatus && d.healthStatus !== "Good") catUpdate["last_check_in.notes"] = d.healthStatus;
                  
                  const finalImageUrl = imageUrl || d.photoDataUrl || d.imageUrl;
-                 if (finalImageUrl) catUpdate.imageUrl = finalImageUrl;
 
                  if (d.addToGallery && finalImageUrl) {
-                     const catSnap = await getDoc(catRef);
-                     if (catSnap.exists()) {
-                         const catData = catSnap.data();
-                         let newGallery = [...(catData.gallery || [])];
-                         newGallery.push({
-                           id: Date.now().toString(),
-                           url: finalImageUrl,
-                           timestamp: Date.now(),
-                           votes: 0,
-                           submittedBy: d.submittedBy
-                         });
-                         newGallery.sort((a: any, b: any) => b.votes - a.votes || b.timestamp - a.timestamp);
-                         if (newGallery.length > 10) newGallery = newGallery.slice(0, 10);
-                         catUpdate.gallery = newGallery;
-                     }
+                     try {
+                         const catSnap = await getDoc(catRef);
+                         if (catSnap.exists()) {
+                             const catData = catSnap.data();
+                             let newGallery = [...(catData.gallery || [])];
+                             if (!newGallery.find(g => g.url === finalImageUrl)) {
+                                 newGallery.push({
+                                   id: Date.now().toString(),
+                                   url: finalImageUrl,
+                                   timestamp: Date.now(),
+                                   votes: 0,
+                                   submittedBy: d.submittedBy
+                                 });
+                                 newGallery.sort((a: any, b: any) => b.votes - a.votes || b.timestamp - a.timestamp);
+                                 if (newGallery.length > 10) newGallery = newGallery.slice(0, 10);
+                                 catUpdate.gallery = newGallery;
+                             }
+                         }
+                     } catch(e) {}
                  }
 
-                 await updateDoc(catRef, catUpdate);
+                 try {
+                     await updateDoc(catRef, catUpdate);
+                 } catch (e: any) {
+                     if (e.code === 'not-found') {
+                         try {
+                             await updateDoc(doc(db, "pets", d.catId), catUpdate);
+                         } catch (e2) {}
+                     }
+                 }
              }
          }
       }
@@ -153,7 +248,7 @@ if (token) {
       console.warn("Telegram polling conflict: Another instance is running.");
     } else if (error.code === "EFATAL" || (error.message && error.message.includes("ECONNRESET"))) {
       // Ignore connection resets, the bot will auto-reconnect
-      console.warn("Telegram polling soft error (ECONNRESET). Auto-reconnecting...");
+      console.debug("Telegram polling soft error (ECONNRESET). Auto-reconnecting...");
     } else {
       console.error("Telegram polling error:", error);
     }
@@ -244,49 +339,77 @@ app.get("/api/proxy-image", async (req, res) => {
 });
 
 app.post("/api/submit-for-review", async (req, res) => {
-  const { id, type, details, imageBase64 } = req.body;
+  const { id, type, details, imageBase64, docIdForReview } = req.body;
   if (!id) return res.status(400).json({ error: "Missing submission ID" });
 
   let uploadedUrl = null;
   if (imageBase64 && imageBase64.startsWith("data:image")) {
+     console.log(`[Review] Starting Bunny upload for ${id}...`);
      uploadedUrl = await uploadToBunny(imageBase64);
      if (uploadedUrl && db) {
         try {
-            const { collection, query: fsQuery, where, getDocs } = await import("firebase/firestore");
-            const coll = type === "check_in" ? "check_ins" : "strays";
+            console.log(`[Review] Uploaded to bunny, updating Firestore...`);
+            const coll = type === "check_in" ? "check_ins" : (type === "hub_proposal" ? "hubs" : "strays");
+            
+            let updatePayload: any = { imageUrl: uploadedUrl };
+            if (coll === "check_ins") updatePayload = { photoDataUrl: uploadedUrl, imageUrl: uploadedUrl };
+            if (coll === "hubs") updatePayload = { photoUrl: uploadedUrl };
+
+            if (docIdForReview) {
+                await setDoc(doc(db, coll, docIdForReview), updatePayload, { merge: true });
+            }
+
             const snap = await getDocs(fsQuery(collection(db, coll), where("submissionId", "==", id)));
-            for (const doc of snap.docs) {
-               await updateDoc(doc.ref, { 
-                   ...(coll === "strays" ? { imageUrl: uploadedUrl } : { photoDataUrl: uploadedUrl, imageUrl: uploadedUrl }) 
-               });
-               if (coll === "check_ins" && doc.data().catId) {
-                   const { doc: fDoc } = await import("firebase/firestore");
-                   const catRef = fDoc(db, "strays", doc.data().catId);
-                   await updateDoc(catRef, { imageUrl: uploadedUrl });
+            for (const d of snap.docs) {
+               if (d.id !== docIdForReview) {
+                  await setDoc(doc(db, coll, d.id), updatePayload, { merge: true });
                }
             }
         } catch(e) {
-            console.error("Failed to update firestore image", e);
+            console.error("[Review] Failed to update firestore image", e);
         }
+     } else if (!uploadedUrl) {
+        console.warn(`[Review] bunny upload returned null, fallback to firestore base64`);
      }
   }
 
+  const autoApprove = process.env.AUTO_APPROVE_SUBMISSIONS !== "false" && type !== "hub_proposal";
+
   // Always auto-approve the submission immediately directly via Firebase
-  if (db) {
-      console.log(`[Review] Auto-approving submission ${id}`);
-      await handleSubmissionApproval(db, id, "approve", uploadedUrl || undefined);
+  if (autoApprove && db) {
+      console.log(`[Review] Auto-approving submission ${id}. with docIdForReview=${docIdForReview}`);
+      try {
+        await handleSubmissionApproval(db, id, "approve", uploadedUrl || imageBase64, docIdForReview, type, details);
+        console.log(`[Review] Auto-approve complete for ${id}`);
+      } catch (e) {
+        console.error(`[Review] Error during handleSubmissionApproval for ${id}:`, e);
+      }
+  } else if (!autoApprove && db) {
+      console.log(`[Review] Auto-approve is disabled, submission ${id} left as under_review.`);
+  } else {
+      console.warn(`[Review] No db configured, skipping auto-approval`);
   }
 
   if (bot && chatId) {
     try {
       const catIdStr = details?.catId ? `\nCat ID: ${details.catId}` : "";
-      const message = `Auto-Approved ${type === "check_in" ? "Check-in" : "Straykin"} Submission! 🐱\nSubmission ID: ${id}${catIdStr}\nDetails: ${JSON.stringify(details, null, 2)}`;
+      const urlStr = uploadedUrl ? `\nFile URL: ${uploadedUrl}` : "";
+      const isApproved = autoApprove;
+      const message = `${isApproved ? "Auto-Approved " : "New "}${type === "check_in" ? "Check-in" : (type === "hub_proposal" ? "Hub Proposal" : "Straykin")} Submission! 🐱\nSubmission ID: ${id}${catIdStr}${urlStr}\nDetails: ${JSON.stringify(details, null, 2)}`;
+
+      const keyboard = isApproved ? [] : [
+          [
+            { text: "✅ Approve", callback_data: `approve_${id}` },
+            { text: "❌ Reject", callback_data: `reject_${id}` },
+          ],
+        ];
 
       const imageToSend = uploadedUrl || imageBase64;
       if (imageToSend) {
         if (imageToSend.startsWith("http")) {
           await bot.sendPhoto(chatId, imageToSend, {
             caption: message,
+            reply_markup: { inline_keyboard: keyboard },
           });
         } else {
           const buffer = Buffer.from(
@@ -295,17 +418,20 @@ app.post("/api/submit-for-review", async (req, res) => {
           );
           await bot.sendPhoto(chatId, buffer, {
             caption: message,
+            reply_markup: { inline_keyboard: keyboard },
           });
         }
       } else {
-        await bot.sendMessage(chatId, message);
+        await bot.sendMessage(chatId, message, {
+           reply_markup: { inline_keyboard: keyboard },
+        });
       }
     } catch (e: any) {
       console.error("Failed to send telegram message:", e.message || e);
     }
   }
 
-  res.json({ success: true, status: "approved" });
+  res.json({ success: true, status: autoApprove ? "approved" : "under_review", imageUrl: uploadedUrl });
 });
 
 app.get("/api/submission-status/:id", async (req, res) => {

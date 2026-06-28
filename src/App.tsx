@@ -16,9 +16,14 @@ import ContactSupportPage from './pages/ContactSupportPage';
 import SuggestionFeedbackPage from './pages/SuggestionFeedbackPage';
 import PetProfile from './pages/PetProfile';
 import SharePage from './pages/SharePage';
+import HubCenter from './pages/HubCenter';
+import HubDetail from './pages/HubDetail';
 import { CatProvider } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
 import { InstallPWA } from './components/InstallPWA';
+
+import { SettingsProvider } from './context/SettingsContext';
+import { ErrorProvider } from './context/ErrorContext';
 
 function SplashScreen({ onComplete }: { onComplete: () => void }) {
   const [fade, setFade] = useState(false);
@@ -65,6 +70,8 @@ function MainLayout() {
           <Route path="/support" element={<ContactSupportPage />} />
           <Route path="/suggestions" element={<SuggestionFeedbackPage />} />
           <Route path="/share" element={<SharePage />} />
+          <Route path="/hubs" element={<HubCenter />} />
+          <Route path="/hub/:id" element={<HubDetail />} />
         </Routes>
       </main>
     </div>
@@ -73,10 +80,14 @@ function MainLayout() {
 
 export default function App() {
   return (
-    <CatProvider>
-      <Router>
-        <MainLayout />
-      </Router>
-    </CatProvider>
+    <ErrorProvider>
+      <SettingsProvider>
+        <CatProvider>
+          <Router>
+            <MainLayout />
+          </Router>
+        </CatProvider>
+      </SettingsProvider>
+    </ErrorProvider>
   );
 }

@@ -33,10 +33,26 @@ service cloud.firestore {
       allow update: if true;
     }
 
+    match /hubs/{hubId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+    }
+
     match /check_ins/{checkInId} {
       allow read: if true;
       allow create: if true;
       allow update: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isSignedIn();
     }
   }
 }

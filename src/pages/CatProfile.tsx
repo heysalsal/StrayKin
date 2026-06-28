@@ -23,6 +23,7 @@ import { CatRecord } from "../types";
 import { motion, AnimatePresence } from "motion/react";
 import { AdBanner } from "../components/AdBanner";
 import { toPng, toBlob } from "html-to-image";
+import { useError } from "../context/ErrorContext";
 
 import Webcam from "react-webcam";
 export default function CatProfile() {
@@ -167,7 +168,84 @@ export default function CatProfile() {
     null,
   );
   const [checkInLoading, setCheckInLoading] = useState(false);
+  const [checkInGender, setCheckInGender] = useState<"Male" | "Female" | null>(null);
   const [isCheckInOpen, setIsCheckInOpen] = useState(false);
+  const [isCheckingLocation, setIsCheckingLocation] = useState(false);
+  const [userDistanceKm, setUserDistanceKm] = useState<number | null>(null);
+  const { showError } = useError();
+
+  useEffect(() => {
+    if (cat?.lat && cat?.lng && "geolocation" in navigator) {
+      const watchId = navigator.geolocation.watchPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          const { distanceBetween } = await import("geofire-common");
+          const dist = distanceBetween([latitude, longitude], [cat.lat, cat.lng]);
+          setUserDistanceKm(dist);
+        },
+        (error) => console.warn("Watching position not available"),
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 5000 }
+      );
+      return () => navigator.geolocation.clearWatch(watchId);
+    }
+  }, [cat?.lat, cat?.lng]);
+
+  const handleOpenCheckIn = async () => {
+    if (!user) {
+      setShowLoginModal(true);
+      return;
+    }
+
+    if (!cat?.lat || !cat?.lng) {
+      startCheckInProcess();
+      return;
+    }
+
+    if (userDistanceKm !== null) {
+      if (userDistanceKm <= 0.5) {
+         startCheckInProcess();
+      } else {
+         alert("You must be near the Straykin's location to check in! (Within 500 meters)");
+      }
+      return;
+    }
+
+    setIsCheckingLocation(true);
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          setIsCheckingLocation(false);
+          const { latitude, longitude } = position.coords;
+          const { distanceBetween } = await import("geofire-common");
+          const distanceInKm = distanceBetween([latitude, longitude], [cat.lat, cat.lng]);
+          setUserDistanceKm(distanceInKm);
+          
+          if (distanceInKm <= 0.5) { // 500 meters
+             startCheckInProcess();
+          } else {
+             alert("You must be near the Straykin's location to check in! (Within 500 meters)");
+          }
+        },
+        (error) => {
+          setIsCheckingLocation(false);
+          alert("Could not get your location. Please enable location services to check in.");
+        },
+        { timeout: 10000, maximumAge: 60000, enableHighAccuracy: true }
+      );
+    } else {
+       setIsCheckingLocation(false);
+       alert("Geolocation is not supported by your browser.");
+    }
+  };
+
+  const startCheckInProcess = () => {
+    setIsCheckInOpen(true);
+    setReportStep("camera");
+    setPhotoAttempts(0);
+    setPhotoDataUrl(null);
+    setCheckInGender(null);
+  };
+
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [isGalleryOpen, setIsGalleryOpen] = useState(false);
@@ -397,6 +475,14 @@ export default function CatProfile() {
   ) => {
     if (e.key === "Enter" && newTagInput.trim()) {
       const suggestValue = newTagInput.trim();
+      
+      const existingName = (cat?.names || []).find(n => n.name.toLowerCase() === suggestValue.toLowerCase());
+      if (existingName) {
+         setNewTagInput("");
+         handleVoteName(existingName.name);
+         return;
+      }
+
       const change = await executeWithVotePower(
         "names",
         suggestValue,
@@ -420,6 +506,11 @@ export default function CatProfile() {
       setShowLoginModal(true);
       return;
     }
+    
+    if (!checkInGender) {
+      alert("Please select a gender.");
+      return;
+    }
 
     setCheckInLoading(true);
 
@@ -428,8 +519,9 @@ export default function CatProfile() {
 
     // Send to manual review
     const submissionId = `checkin_${Date.now()}`;
+    let docIdForReview = "";
     try {
-      await addCheckInLog({
+      const checkInRes = await addCheckInLog({
         catId: cat.id,
         wasFed,
         healthStatus,
@@ -440,12 +532,14 @@ export default function CatProfile() {
         submissionId,
         submittedBy: user?.uid,
       });
+      docIdForReview = checkInRes.id;
 
       fetch("/api/submit-for-review", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: submissionId,
+          docIdForReview,
           type: "check_in",
           details: {
             catId: cat.id,
@@ -454,34 +548,55 @@ export default function CatProfile() {
             geo_point: undefined,
             addToGallery: actualAddToGallery,
             submittedBy: user?.uid,
+            checkInId: checkInRes.id,
           },
           imageBase64: photoDataUrl,
         }),
-      }).catch((err) => console.error("Background review failed", err));
-    } catch (err) {
+      })
+      .then(res => res.json())
+      .then(data => {
+        updateCatSighting(cat.id, { 
+          status: data.status, 
+          isCheckIn: true,
+          gender: checkInGender,
+          addToGallery: actualAddToGallery,
+          ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+        });
+      })
+      .catch((err) => console.error("Background review failed", err));
+    } catch (err: any) {
       console.error("Failed to submit:", err);
       // Offline mode handling...
-      await addCheckInLog({
-        catId: cat.id,
-        wasFed,
-        healthStatus,
-        geo_point: undefined,
-        photoDataUrl: null,
-        addToGallery: actualAddToGallery,
-        status: "approved",
-        submissionId,
-        submittedBy: user?.uid,
-      });
-      await updateCatSighting(cat.id, {
-        wasFed,
-        activities: wasFed ? ["Feed"] : [],
-        notes: healthStatus !== "Good" ? healthStatus : undefined,
-        photoDataUrl: null,
-        addToGallery: actualAddToGallery,
-        isCheckIn: true,
-        status: "approved",
-        submittedBy: user?.uid,
-      });
+      try {
+        await addCheckInLog({
+          catId: cat.id,
+          wasFed,
+          healthStatus,
+          geo_point: undefined,
+          photoDataUrl: null,
+          addToGallery: actualAddToGallery,
+          status: "approved",
+          submissionId,
+          submittedBy: user?.uid,
+        });
+        await updateCatSighting(cat.id, {
+          wasFed,
+          activities: wasFed ? ["Feed"] : [],
+          notes: healthStatus !== "Good" ? healthStatus : undefined,
+          photoDataUrl: null,
+          addToGallery: actualAddToGallery,
+          isCheckIn: true,
+          gender: checkInGender,
+          status: "approved",
+          submittedBy: user?.uid,
+        });
+      } catch (offlineErr: any) {
+        showError(
+          err?.message || offlineErr?.message || "Connection error. Failed to save your check-in."
+        );
+        setCheckInLoading(false);
+        return; // Stop here if it fails
+      }
     }
 
     setCheckInLoading(false);
@@ -526,7 +641,7 @@ export default function CatProfile() {
     <div className="relative h-full w-full font-sans bg-black flex flex-col overflow-y-auto pb-32">
       <div className="sticky top-0 inset-x-0 p-4 bg-gradient-to-b from-black/60 to-transparent pt-6 flex justify-between items-start z-[60] w-full mb-[-88px] pointer-events-none">
         <button
-          onClick={() => navigate(-1)}
+          onClick={() => navigate("/")}
           className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors pointer-events-auto"
         >
           <ChevronLeft className="w-7 h-7 -ml-0.5" />
@@ -676,9 +791,9 @@ export default function CatProfile() {
           {/* Minimal Tag display directly on image */}
           <div className="flex flex-wrap gap-2 mb-4">
             <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold shadow-sm backdrop-blur-md border border-indigo-400/50">
-              {cat.animalType || "Cat"}
+              {cat.strayType || cat.animalType || "Cat"}
             </span>
-            {defaultColors.map((c) => (
+            {(cat.color ? [cat.color] : defaultColors).map((c) => (
               <span
                 key={c}
                 className="bg-orange-500 text-white px-3 py-1 rounded-full text-sm font-bold shadow-sm"
@@ -686,7 +801,12 @@ export default function CatProfile() {
                 {c}
               </span>
             ))}
-            {isSterilized && (
+            {cat.isResidentPet && (
+              <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-indigo-400/50">
+                Resident Pet
+              </span>
+            )}
+            {(isSterilized || cat.isNeutered) && (
               <span className="bg-emerald-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-emerald-400/50">
                 TNR Verified
               </span>
@@ -960,6 +1080,33 @@ export default function CatProfile() {
               onKeyDown={async (e) => {
                 if (e.key === "Enter" && newTraitInput.trim()) {
                   const suggestValue = newTraitInput.trim();
+                  
+                  const chars = cat?.characteristics || [];
+                  const existing = chars.find(c => c.tag?.toLowerCase() === suggestValue.toLowerCase());
+                  
+                  if (existing) {
+                    setNewTraitInput("");
+                    const change = await executeWithVotePower(
+                      "traits",
+                      existing.tag,
+                      `You voted for trait "${existing.tag}"!`,
+                    );
+                    if (change !== 0 && cat && id) {
+                      const newTraits = chars.map((c) =>
+                        c.tag === existing.tag
+                          ? { ...c, votes: Math.max(0, c.votes + change) }
+                          : c,
+                      );
+                      setCat((prev) =>
+                        prev ? { ...prev, characteristics: newTraits } : prev,
+                      );
+                      await updateCatProfile(id, {
+                        characteristics: newTraits,
+                      }).catch(() => {});
+                    }
+                    return;
+                  }
+
                   const change = await executeWithVotePower(
                     "traits",
                     suggestValue,
@@ -987,6 +1134,33 @@ export default function CatProfile() {
               onClick={async () => {
                 if (newTraitInput.trim()) {
                   const suggestValue = newTraitInput.trim();
+                  
+                  const chars = cat?.characteristics || [];
+                  const existing = chars.find(c => c.tag?.toLowerCase() === suggestValue.toLowerCase());
+                  
+                  if (existing) {
+                    setNewTraitInput("");
+                    const change = await executeWithVotePower(
+                      "traits",
+                      existing.tag,
+                      `You voted for trait "${existing.tag}"!`,
+                    );
+                    if (change !== 0 && cat && id) {
+                      const newTraits = chars.map((c) =>
+                        c.tag === existing.tag
+                          ? { ...c, votes: Math.max(0, c.votes + change) }
+                          : c,
+                      );
+                      setCat((prev) =>
+                        prev ? { ...prev, characteristics: newTraits } : prev,
+                      );
+                      await updateCatProfile(id, {
+                        characteristics: newTraits,
+                      }).catch(() => {});
+                    }
+                    return;
+                  }
+
                   const change = await executeWithVotePower(
                     "traits",
                     suggestValue,
@@ -1154,19 +1328,24 @@ export default function CatProfile() {
 
       {/* Camera Mode Overlay */}
       {isCheckInOpen && reportStep === "camera" && (
-        <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center animate-in zoom-in-95">
+        <div className="fixed inset-0 z-[60] bg-black flex flex-col items-center justify-center animate-in zoom-in-95 overflow-hidden">
           {/* @ts-ignore */}
           <Webcam
             audio={false}
             ref={webcamRef}
             screenshotFormat="image/jpeg"
-            screenshotQuality={0.6}
-            videoConstraints={{ facingMode: "environment", width: 800 }}
+            screenshotQuality={0.92}
+            forceScreenshotSourceSize={true}
+            videoConstraints={{ 
+              facingMode: "environment",
+              width: { ideal: 1920 },
+              height: { ideal: 1080 } 
+            }}
             className="absolute inset-0 w-full h-full object-cover"
           />
 
           {/* Header */}
-          <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent">
+          <div className="absolute top-0 inset-x-0 p-6 flex justify-between items-center bg-gradient-to-b from-black/80 to-transparent z-10 pt-safe">
             <h2 className="text-white font-black text-xl tracking-tight">
               Focus on Straykin
             </h2>
@@ -1178,8 +1357,16 @@ export default function CatProfile() {
             </button>
           </div>
 
+          {/* Viewfinder brackets */}
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[75vw] h-[55vw] max-w-[300px] max-h-[220px] pointer-events-none">
+            <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white drop-shadow-md rounded-tl-xl" />
+            <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white drop-shadow-md rounded-tr-xl" />
+            <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white drop-shadow-md rounded-bl-xl" />
+            <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white drop-shadow-md rounded-br-xl" />
+          </div>
+
           {/* Capture button */}
-          <div className="absolute bottom-0 inset-x-0 p-8 flex justify-center items-end bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+          <div className="absolute bottom-0 inset-x-0 p-8 flex justify-center items-end bg-gradient-to-t from-black/80 via-black/40 to-transparent pb-safe-12 z-10 w-full min-w-full">
             <button
               onClick={(e) => {
                 e.preventDefault();
@@ -1200,22 +1387,20 @@ export default function CatProfile() {
       <div className="fixed sm:absolute bottom-0 inset-x-0 p-4 z-50 pointer-events-none flex justify-center">
         {!isCheckInOpen ? (
           <>
-            <button
-              onClick={() => {
-                setIsCheckInOpen(true);
-                setReportStep("form");
-                setPhotoAttempts(0);
-                setPhotoDataUrl(null);
-                setTimeout(
-                  () => document.getElementById("native-camera-input")?.click(),
-                  100,
-                );
-              }}
-              className="w-full max-w-sm py-4 rounded-full bg-orange-500 text-white font-black text-lg shadow-[0_10px_30px_rgba(249,115,22,0.4)] pointer-events-auto hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
-            >
-              <Plus className="w-6 h-6" />
-              Check In Straykin
-            </button>
+            {((!cat?.lat || !cat?.lng) || (userDistanceKm !== null && userDistanceKm <= 0.5)) && (
+              <button
+                onClick={handleOpenCheckIn}
+                disabled={isCheckingLocation}
+                className="w-full max-w-sm py-4 rounded-full bg-orange-500 text-white font-black text-lg shadow-[0_10px_30px_rgba(249,115,22,0.4)] pointer-events-auto hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2 disabled:bg-orange-300 disabled:scale-100"
+              >
+                {isCheckingLocation ? (
+                   <div className="w-6 h-6 border-4 border-slate-100 border-r-transparent rounded-full animate-spin"></div>
+                ) : (
+                  <Plus className="w-6 h-6" />
+                )}
+                {isCheckingLocation ? "Getting Location..." : "Check In Straykin"}
+              </button>
+            )}
           </>
         ) : reportStep === "form" ? (
           <div className="w-full bg-slate-900 rounded-[2rem] p-6 shadow-2xl pointer-events-auto border border-slate-800 animate-in slide-in-from-bottom-8 fade-in duration-300">
@@ -1244,9 +1429,7 @@ export default function CatProfile() {
                       <button
                         onClick={(e) => {
                           e.preventDefault();
-                          document
-                            .getElementById("native-camera-input")
-                            ?.click();
+                          setReportStep("camera");
                         }}
                         className="absolute top-2 right-2 bg-black/60 backdrop-blur text-white text-xs font-bold px-3 py-1.5 rounded-full z-10 transition-opacity"
                       >
@@ -1255,9 +1438,7 @@ export default function CatProfile() {
                     </>
                   ) : (
                     <button
-                      onClick={() =>
-                        document.getElementById("native-camera-input")?.click()
-                      }
+                      onClick={() => setReportStep("camera")}
                       className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-orange-500 transition-colors relative z-10"
                     >
                       <div className="w-10 h-10 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center">
@@ -1266,22 +1447,6 @@ export default function CatProfile() {
                       <span className="text-sm font-bold">Open Camera</span>
                     </button>
                   )}
-                  <input
-                    id="native-camera-input"
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = (ev) =>
-                          setPhotoDataUrl(ev.target?.result as string);
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                  />
                 </div>
                 {photoDataUrl && (
                   <div className="flex flex-col mt-3 px-1">
@@ -1311,6 +1476,26 @@ export default function CatProfile() {
                     )}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2.5">
+                  Gender
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={(e) => { e.preventDefault(); setCheckInGender("Male"); }}
+                    className={`flex-1 py-3.5 rounded-2xl text-sm font-bold transition-all ${checkInGender === "Male" ? "bg-orange-500 text-white shadow-md" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                  >
+                    Male
+                  </button>
+                  <button
+                    onClick={(e) => { e.preventDefault(); setCheckInGender("Female"); }}
+                    className={`flex-1 py-3.5 rounded-2xl text-sm font-bold transition-all ${checkInGender === "Female" ? "bg-orange-500 text-white shadow-md" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}
+                  >
+                    Female
+                  </button>
+                </div>
               </div>
 
               <div>
@@ -1442,23 +1627,35 @@ export default function CatProfile() {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  // Mock badge check
-                  alert("Details submitted for community verification!");
-                  setCat((prev) =>
-                    prev
-                      ? {
-                          ...prev,
-                          color: sightingColor,
-                          strayType: sightingType,
-                          isNeutered: sightingNeutered ?? prev.isNeutered,
-                        }
-                      : prev,
-                  );
-                  setSightingColor("");
-                  setSightingType("");
-                  setSightingNeutered(null);
-                  setIsDetailsOpen(false);
+                onClick={async () => {
+                  try {
+                    const updates = {
+                      color: sightingColor || undefined,
+                      strayType: sightingType || undefined,
+                      isNeutered: sightingNeutered !== null ? sightingNeutered : undefined,
+                    };
+                    if (id) {
+                      await updateCatProfile(id, updates);
+                    }
+                    setCat((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            ...(sightingColor ? { color: sightingColor } : {}),
+                            ...(sightingType ? { strayType: sightingType } : {}),
+                            ...(sightingNeutered !== null ? { isNeutered: sightingNeutered } : {}),
+                          }
+                        : prev,
+                    );
+                    alert("Details submitted for community verification!");
+                    setSightingColor("");
+                    setSightingType("");
+                    setSightingNeutered(null);
+                    setIsDetailsOpen(false);
+                  } catch (e) {
+                    console.error(e);
+                    alert("Failed to submit details.");
+                  }
                 }}
                 className="flex-1 py-3 rounded-xl bg-orange-500 text-white font-bold text-sm shadow-lg shadow-orange-500/20 hover:bg-orange-600"
               >
@@ -1574,6 +1771,7 @@ export default function CatProfile() {
           </div>
         </div>
       )}
+
     </div>
   );
 }

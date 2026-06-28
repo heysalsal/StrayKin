@@ -163,7 +163,7 @@ export default function SharePage() {
                 <div className="flex justify-between items-start gap-2 pb-[6px] mb-[6px] mt-[9px]">
                   <div className="flex-1 pr-2">
                     <h3 className="text-4xl font-black text-white leading-none break-words mb-0 pb-0">
-                      {topName || cat?.name || "Stray"}
+                      {topName || cat?.name || cat?.animalType || "Stray"}
                     </h3>
                     <div className="flex items-center gap-2 mb-2">
                       <span className="w-2 h-2 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]"></span>
@@ -312,7 +312,17 @@ export default function SharePage() {
     <div className="h-[100dvh] w-full overflow-y-auto bg-black text-white px-4 py-8 relative flex flex-col">
       <div className="flex items-center justify-between mb-8 shrink-0">
         <button 
-          onClick={() => navigate(-1)}
+          onClick={() => {
+            if (state?.type === 'submission') {
+              if (state?.cat?.id) {
+                navigate(`/cat/${state.cat.id}`, { replace: true });
+              } else {
+                navigate('/', { replace: true });
+              }
+            } else {
+              navigate(-1);
+            }
+          }}
           className="p-2 bg-slate-800 rounded-full text-slate-300"
         >
           <ChevronLeft className="w-6 h-6" />
