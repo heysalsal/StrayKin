@@ -18,20 +18,37 @@ import PetProfile from './pages/PetProfile';
 import SharePage from './pages/SharePage';
 import HubCenter from './pages/HubCenter';
 import HubDetail from './pages/HubDetail';
-import { CatProvider } from './context/CatContext';
+import { CatProvider, useCatDatabase } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
 import { InstallPWA } from './components/InstallPWA';
 
 import { SettingsProvider } from './context/SettingsContext';
 import { ErrorProvider } from './context/ErrorContext';
 
-function SplashScreen({ onComplete }: { onComplete: () => void }) {
+function SplashScreen({ isReady, onComplete }: { isReady: boolean, onComplete: () => void }) {
   const [fade, setFade] = useState(false);
+  const [minTimePassed, setMinTimePassed] = useState(false);
 
   useEffect(() => {
-    const timer1 = setTimeout(() => setFade(true), 1500); // Start fade out
-    const timer2 = setTimeout(onComplete, 2000); // Remove splash completely
-    return () => { clearTimeout(timer1); clearTimeout(timer2); };
+    const timer = setTimeout(() => setMinTimePassed(true), 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (isReady && minTimePassed) {
+      setFade(true);
+      const timer = setTimeout(onComplete, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isReady, minTimePassed, onComplete]);
+
+  // Max timeout fallback
+  useEffect(() => {
+    const fallbackTimer = setTimeout(() => {
+      setFade(true);
+      setTimeout(onComplete, 500);
+    }, 3000);
+    return () => clearTimeout(fallbackTimer);
   }, [onComplete]);
 
   return (
@@ -51,10 +68,14 @@ function SplashScreen({ onComplete }: { onComplete: () => void }) {
 
 function MainLayout() {
   const [showSplash, setShowSplash] = useState(true);
+  const { loading: authLoading } = useLazyAuth();
+  const { loading: catsLoading } = useCatDatabase();
+
+  const isReady = !authLoading && !catsLoading;
 
   return (
     <div className="flex flex-col h-screen w-full sm:max-w-md sm:mx-auto sm:border-x sm:border-slate-200 bg-[#e5e7eb] font-sans overflow-hidden sm:shadow-2xl relative">
-      {showSplash && <SplashScreen onComplete={() => setShowSplash(false)} />}
+      {showSplash && <SplashScreen isReady={isReady} onComplete={() => setShowSplash(false)} />}
       <InstallPWA />
       
       <main className="flex-1 relative flex overflow-hidden">

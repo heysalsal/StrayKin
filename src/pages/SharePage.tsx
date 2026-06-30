@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Share as ShareIcon, Download, Dog, MapPin, Cat, User as UserIcon } from 'lucide-react';
+import { ChevronLeft, Share as ShareIcon, Download, Dog, MapPin, Cat, User as UserIcon, Link as LinkIcon } from 'lucide-react';
 import { toPng, toBlob } from 'html-to-image';
 import { useCatDatabase } from '../context/CatContext';
 import { auth, db } from '../config/firebase';
@@ -85,11 +85,17 @@ export default function SharePage() {
         type: blob.type,
       });
 
+      let shareUrl = window.location.origin;
+      if (state?.cat?.id) {
+        shareUrl += `/cat/${state.cat.id}`;
+      }
+
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
           title: "Straykin",
           text: "Check out this on Straykin!",
+          url: shareUrl,
         });
       } else {
         alert("Sharing not supported on this browser.");
@@ -345,21 +351,34 @@ export default function SharePage() {
       </div>
 
       {!shareFinalImage && (
-        <div className="absolute bottom-0 left-0 right-0 w-full max-w-sm mx-auto flex gap-4 shrink-0 pb-[41px] pl-[1px] px-4 z-50 pt-8 mt-0 bg-gradient-to-t from-black via-black/80 to-transparent">
-          <button
-            disabled={isGenerating}
-            onClick={handleSave}
-            className="flex-1 flex items-center justify-center gap-2 py-4 bg-slate-800 hover:bg-slate-700 active:scale-95 border-2 border-slate-700 text-white rounded-2xl font-black transition-all disabled:opacity-50 disabled:active:scale-100 disabled:hover:bg-slate-800 shadow-xl"
-          >
-            <Download className="w-5 h-5" /> Save
-          </button>
-          <button
-            disabled={isGenerating}
-            onClick={handleShare}
-            className="flex-[2] flex items-center justify-center gap-2 py-4 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-2xl font-black text-lg transition-all disabled:opacity-50 disabled:active:scale-100 disabled:hover:bg-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.4)]"
-          >
-            <ShareIcon className="w-5 h-5 text-white fill-white" /> Share
-          </button>
+        <div className="absolute bottom-0 left-0 right-0 w-full max-w-sm mx-auto flex flex-col gap-4 shrink-0 pb-[41px] pl-[1px] px-4 z-50 pt-8 mt-0 bg-gradient-to-t from-black via-black/80 to-transparent">
+          <div className="flex gap-4">
+            <button
+              disabled={isGenerating}
+              onClick={handleSave}
+              className="flex-1 flex items-center justify-center gap-2 py-4 bg-slate-800 hover:bg-slate-700 active:scale-95 border-2 border-slate-700 text-white rounded-2xl font-black transition-all disabled:opacity-50 disabled:active:scale-100 disabled:hover:bg-slate-800 shadow-xl"
+            >
+              <Download className="w-5 h-5" /> Save
+            </button>
+            <button
+              disabled={isGenerating}
+              onClick={handleShare}
+              className="flex-[2] flex items-center justify-center gap-2 py-4 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-2xl font-black text-lg transition-all disabled:opacity-50 disabled:active:scale-100 disabled:hover:bg-orange-500 shadow-[0_0_20px_rgba(249,115,22,0.4)]"
+            >
+              <ShareIcon className="w-5 h-5 text-white fill-white" /> Share
+            </button>
+          </div>
+          {state?.cat?.id && (
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/cat/${state.cat.id}`);
+                alert('Link copied to clipboard!');
+              }}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-slate-800/80 backdrop-blur-md hover:bg-slate-700 active:scale-95 text-slate-300 rounded-2xl font-bold transition-all"
+            >
+              <LinkIcon className="w-5 h-5" /> Copy Cat Profile Link
+            </button>
+          )}
         </div>
       )}
     </div>

@@ -40,12 +40,13 @@ const CatContext = createContext<CatContextProps | undefined>(undefined);
 
 export function CatProvider({ children }: { children: React.ReactNode }) {
   const [cats, setCats] = useState<CatRecord[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   
   const unsubscribesRef = React.useRef<any[]>([]);
 
   const updateViewport = React.useCallback((lat: number, lng: number, radiusM: number) => {
+    setLoading(true);
     import("geofire-common").then(({ geohashQueryBounds, distanceBetween }) => {
       import("firebase/firestore").then(({ onSnapshot, query, collection, where, orderBy }) => {
         unsubscribesRef.current.forEach(u => u());
@@ -53,9 +54,9 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
 
         const bounds = geohashQueryBounds([lat, lng], radiusM);
         const mapData = new Map<string, CatRecord>();
-
-        // We only maintain notifications for new additions
-        let initialLoad = true;
+        
+        let resolvedCount = 0;
+        const totalQueries = bounds.length + 1;
 
         for (const b of bounds) {
           const q = query(
@@ -65,11 +66,12 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
             where("geohash", "<=", b[1])
           );
           
+          let isFirstRun = true;
           const unsub = onSnapshot(q, (snap) => {
             snap.docs.forEach(doc => {
                const cat = doc.data() as CatRecord;
                const dist = distanceBetween([cat.lat, cat.lng], [lat, lng]) * 1000;
-               if (dist <= radiusM + 500) { // Add a little buffer
+               if (dist <= radiusM + 500) {
                  mapData.set(doc.id, { id: doc.id, ...cat } as CatRecord);
                } else {
                  mapData.delete(doc.id);
@@ -77,16 +79,20 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
             });
             
             snap.docChanges().forEach(change => {
-               const cat = change.doc.data() as CatRecord;
                if (change.type === "removed") {
                   mapData.delete(change.doc.id);
                }
-               
-               // Push notifications now handle these asynchronously.
-               // We disable local browser Notifications here to prevent spam.
             });
             
-            setCats(Array.from(mapData.values()));
+            if (isFirstRun) {
+              resolvedCount++;
+              isFirstRun = false;
+            }
+            
+            if (resolvedCount >= totalQueries) {
+              setCats(Array.from(mapData.values()));
+              setLoading(false);
+            }
           });
           unsubscribesRef.current.push(unsub);
         }
@@ -96,6 +102,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
           collection(db, "pets"),
           where("status", "in", ["public", "lost"])
         );
+        let isFirstRunPets = true;
         const unsubPets = onSnapshot(qPets, (snap) => {
           snap.docs.forEach(doc => {
             const pet = doc.data() as any;
@@ -128,12 +135,17 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
              }
           });
           
-          setCats(Array.from(mapData.values()));
+          if (isFirstRunPets) {
+            resolvedCount++;
+            isFirstRunPets = false;
+          }
+          
+          if (resolvedCount >= totalQueries) {
+            setCats(Array.from(mapData.values()));
+            setLoading(false);
+          }
         });
         unsubscribesRef.current.push(unsubPets);
-        
-        // Small delay to allow all initial snapshots to resolve before treating as non-initial
-        setTimeout(() => initialLoad = false, 2000);
       });
     });
   }, []);

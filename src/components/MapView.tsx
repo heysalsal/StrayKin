@@ -73,23 +73,25 @@ const isRecentlyFed = (cat: CatRecord) => {
 
 const createMarkerIcon = (
   isFedRecently: boolean,
-  status: string | undefined,
+  cat: CatRecord,
 ) => {
   let colorClass = isFedRecently ? "bg-emerald-500" : "bg-orange-400";
-  let innerText = "🐾";
+  let innerContent = "🐾";
 
-  if (status === "under_review") {
+  if (cat.status === "under_review") {
     colorClass = "bg-amber-400";
-    innerText = "⏳";
+    innerContent = "⏳";
+  } else if (cat.imageUrl) {
+    innerContent = `<img src="${cat.imageUrl}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 9999px;" />`;
   }
 
   return L.divIcon({
     className: "custom-cat-marker bg-transparent border-0",
     html: `<div class="relative flex flex-col items-center">
-             <div class="w-10 h-10 ${colorClass} rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white text-lg">${innerText}</div>
+             <div class="w-[60px] h-[60px] ${colorClass} rounded-full border-4 border-white shadow-xl flex items-center justify-center text-white text-lg overflow-hidden">${innerContent}</div>
            </div>`,
-    iconSize: [40, 40],
-    iconAnchor: [20, 20],
+    iconSize: [60, 60],
+    iconAnchor: [30, 30],
   });
 };
 
@@ -211,6 +213,14 @@ import { useNavigate } from "react-router-dom";
 import { InterstitialAd } from "../config/InterstitialAd";
 import { distanceBetween } from "geofire-common";
 
+export const getCatTopName = (cat: any) => {
+  let sortedNames = [...(cat.names || [])].sort((a: any, b: any) => b.votes - a.votes);
+  if (sortedNames.length === 0 && cat.name) {
+    return cat.name;
+  }
+  return sortedNames.length > 0 ? sortedNames[0].name : (cat.name || `Straykin ${cat.id ? '#' + cat.id.slice(-4) : ''}`);
+};
+
 export default function MapView() {
   const navigate = useNavigate();
   const { settings } = useSettings();
@@ -238,7 +248,7 @@ export default function MapView() {
   const [recenterCounter, setRecenterCounter] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [modalStep, setModalStep] = useState<"camera" | "scan" | "form">("camera");
+  const [modalStep, setModalStep] = useState<"camera" | "scan" | "form" | "guide" | "throwing">("camera");
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<{
     url: string;
@@ -254,13 +264,24 @@ export default function MapView() {
   const captureWebcam = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
+      if (navigator.vibrate) {
+        navigator.vibrate([100, 50, 100]); // Short double vibration pattern
+      }
       setPhotoDataUrl(imageSrc);
-      if (position) {
-        fetchNearbyCats(position[0], position[1], 500).then(nearby => {
-          setDuplicates(nearby);
-          setCurrentIdx(0);
+      setModalStep("throwing");
+      
+      const proceed = (nearby: any[]) => {
+        setDuplicates(nearby);
+        setCurrentIdx(0);
+        setTimeout(() => {
           setModalStep("scan");
-        });
+        }, 1200); // 1.2s for throwing animation
+      };
+
+      if (position) {
+        fetchNearbyCats(position[0], position[1], 500).then(proceed);
+      } else {
+        proceed([]);
       }
     }
   }, [position]);
@@ -272,7 +293,7 @@ export default function MapView() {
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       items = items.filter(c => 
-        c.name?.toLowerCase().includes(q) || 
+        getCatTopName(c).toLowerCase().includes(q) || 
         c.animalType?.toLowerCase().includes(q) || 
         c.id.toLowerCase().includes(q)
       );
@@ -382,7 +403,7 @@ export default function MapView() {
         return {
           id: doc.id,
           hub_id: hub.id,
-          name: d.name || d.animalType || "Stray",
+          name: getCatTopName(d) || d.animalType || "Stray",
           age: "Unknown",
           breed: "Unknown",
           status: "Resident Cat",
@@ -944,7 +965,7 @@ export default function MapView() {
               <Marker
                 key={cat.id}
                 position={[cat.lat, cat.lng]}
-                icon={createMarkerIcon(isRecentlyFed(cat), cat.status)}
+                icon={createMarkerIcon(isRecentlyFed(cat), cat)}
               >
                 <Popup>
                   <div
@@ -955,7 +976,7 @@ export default function MapView() {
                       onClick={() =>
                         setPendingNavigation({
                           url: `/cat/${cat.id}`,
-                          alias: cat.name || cat.animalType || "Pet",
+                          alias: getCatTopName(cat) || cat.animalType || "Pet",
                           cat: cat
                         })
                       }
@@ -985,7 +1006,7 @@ export default function MapView() {
                         className="font-black text-black text-2xl leading-none truncate"
                         style={{ letterSpacing: "-0.02em" }}
                       >
-                        {cat.name || `Straykin`}
+                        {getCatTopName(cat)}
                       </h3>
                       <p className="text-[11px] text-slate-800 mt-1">
                         Last Seen nearby
@@ -1272,8 +1293,30 @@ export default function MapView() {
                 </div>
               </div>
             </div>
+          ) : modalStep === "throwing" ? (
+            <div className="absolute inset-x-0 inset-y-0 bg-black z-50 flex flex-col pt-safe px-0 pb-0 overflow-hidden items-center justify-center">
+              {photoDataUrl && (
+                <img src={photoDataUrl} className="absolute inset-0 w-full h-full object-cover opacity-60" />
+              )}
+              {/* Animated Shutter Button */}
+              <motion.div
+                initial={{ y: "40vh", scale: 1, rotateX: 0 }}
+                animate={{ y: 0, scale: 0.4, rotateX: -720 }}
+                transition={{ duration: 1.2, ease: "easeInOut" }}
+                className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-[0_0_0_6px_rgba(249,115,22,0.5)] relative z-10"
+              >
+                <div className="w-16 h-16 rounded-full border-2 border-slate-200 flex items-center justify-center bg-white">
+                  <div className="w-8 h-8 bg-orange-500 rounded-full" />
+                </div>
+              </motion.div>
+            </div>
           ) : (
-          <div className={`relative bg-white z-50 overflow-y-auto ${modalStep === "scan" && displayItems.length > 5 ? "w-full h-full max-h-[100dvh] rounded-none p-6 pb-safe sm:max-w-md sm:rounded-[3rem] sm:max-h-[90vh]" : "w-full max-w-[400px] rounded-[3rem] p-8 shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] border border-slate-100 max-h-[90vh]"}`}>
+          <motion.div 
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            className={`relative bg-white z-50 overflow-y-auto ${modalStep === "scan" && displayItems.length > 5 ? "w-full h-full max-h-[100dvh] rounded-none p-6 pb-safe sm:max-w-md sm:rounded-[3rem] sm:max-h-[90vh]" : "w-full max-w-[400px] rounded-[3rem] p-8 shadow-[0_35px_60px_-15px_rgba(0,0,0,0.3)] border border-slate-100 max-h-[90vh]"}`}
+          >
             {modalStep === "guide" ? (
               <>
                 <div className="flex justify-between items-start mb-6">
@@ -1398,7 +1441,7 @@ export default function MapView() {
                                     {item.data?.animalType || "Cat"}
                                   </span>
                                   <h3 className="text-2xl font-black">
-                                    {item.data?.name || `Straykin #${item.data?.id.slice(-4)}`}
+                                    {getCatTopName(item.data)}
                                   </h3>
                                   <p className="text-sm font-medium opacity-90 mt-1">
                                     Logged {item.data?.last_check_in?.was_fed ? "as fed" : "recently"}
@@ -1490,8 +1533,7 @@ export default function MapView() {
                                     {displayItems[currentIdx].data?.animalType || "Cat"}
                                   </span>
                                   <h3 className="text-2xl font-black">
-                                    {displayItems[currentIdx].data?.name ||
-                                      `Straykin #${displayItems[currentIdx].data?.id.slice(-4)}`}
+                                    {getCatTopName(displayItems[currentIdx].data)}
                                   </h3>
                                   <p className="text-sm font-medium opacity-90 mt-1">
                                     Logged{" "}
@@ -1592,7 +1634,7 @@ export default function MapView() {
                                 {cat.animalType || "Cat"}
                               </span>
                               <h3 className="text-lg font-bold text-slate-800 leading-tight">
-                                {cat.name || `Straykin #${cat.id.slice(-4)}`}
+                                {getCatTopName(cat)}
                               </h3>
                               <p className="text-xs text-slate-500 font-medium mt-1">
                                 Last seen:{" "}
@@ -1902,7 +1944,7 @@ export default function MapView() {
                   </div>
                 </>
               )}
-            </div>
+            </motion.div>
             )}
         </div>
       )}

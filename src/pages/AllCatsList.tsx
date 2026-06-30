@@ -5,6 +5,8 @@ import { ChevronLeft } from 'lucide-react';
 import { distanceBetween } from 'geofire-common';
 import { AdBanner } from '../components/AdBanner';
 
+import { getCatTopName } from '../components/MapView';
+
 export default function AllCatsList() {
   const navigate = useNavigate();
   const { cats } = useCatDatabase();
@@ -66,7 +68,7 @@ export default function AllCatsList() {
                   <div className="flex flex-col min-w-0">
                     <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider mb-0.5">{cat.animalType || 'Cat'}</span>
                     <h3 className="text-lg font-bold text-slate-800 leading-tight truncate">
-                      {cat.name || `Straykin #${cat.id.slice(-4)}`}
+                      {getCatTopName(cat)}
                     </h3>
                   </div>
                   {cat.status === 'under_review' && (

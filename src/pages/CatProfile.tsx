@@ -718,7 +718,7 @@ export default function CatProfile() {
             onClick={() => setShowInterstitial(false)}
             className="px-8 py-4 mt-8 bg-orange-500 text-white rounded-2xl font-bold shadow-lg shadow-orange-200"
           >
-            Continue to {cat.name || "Straykin"}
+            Continue to {topName}
           </button>
         </div>
       )}
@@ -820,6 +820,8 @@ export default function CatProfile() {
               ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}`
               : "recently"}
           </p>
+
+          <p className="text-xs font-mono text-white/40 mb-2">ID: {cat.id}</p>
         </div>
       </div>
 
