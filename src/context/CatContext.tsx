@@ -160,9 +160,15 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         ...doc.data(),
       })) as CatRecord[];
 
-      setCats(data);
+      if (data.length === 0) {
+         setCats([]);
+      } else {
+        setCats(data);
+      }
     } catch (e) {
       console.error("Failed to fetch from Firestore", e);
+      // Fallback mock data
+      setCats([]);
     } finally {
       setLoading(false);
     }
@@ -242,6 +248,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
     } catch(e) {
       console.error(e);
       // Fallback to memory array
+      const { distanceBetween } = await import("geofire-common");
       return cats.filter((cat) => {
         if (cat.status !== "approved") return false;
         const dist = distanceBetween([cat.lat, cat.lng], center) * 1000;
@@ -289,6 +296,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         status: details.status || (autoApprove ? "approved" : "under_review"),
         submissionId: details.submissionId || null,
         submittedBy: details.submittedBy || null,
+        createdAt: serverTimestamp(),
         hub_id: details.hub_id || null,
         isResidentPet: details.isResidentPet || false,
         locationName: details.locationName || null,

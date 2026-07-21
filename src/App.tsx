@@ -16,7 +16,7 @@ import ContactSupportPage from './pages/ContactSupportPage';
 import SuggestionFeedbackPage from './pages/SuggestionFeedbackPage';
 import PetProfile from './pages/PetProfile';
 import SharePage from './pages/SharePage';
-import HubCenter from './pages/HubCenter';
+import CommunityPage from './pages/CommunityPage';
 import HubDetail from './pages/HubDetail';
 import { CatProvider, useCatDatabase } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
@@ -91,7 +91,7 @@ function MainLayout() {
           <Route path="/support" element={<ContactSupportPage />} />
           <Route path="/suggestions" element={<SuggestionFeedbackPage />} />
           <Route path="/share" element={<SharePage />} />
-          <Route path="/hubs" element={<HubCenter />} />
+          <Route path="/community" element={<CommunityPage />} />
           <Route path="/hub/:id" element={<HubDetail />} />
         </Routes>
       </main>

@@ -73,14 +73,14 @@ export default function HubDetail() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex justify-center items-center">
+      <div className="h-full w-full bg-slate-50 flex justify-center items-center">
         <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
       </div>
     );
   }
 
   if (!hub) return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center font-sans">
+    <div className="h-full w-full overflow-y-auto bg-slate-50 flex flex-col items-center justify-center font-sans">
       <h2 className="text-xl font-bold text-slate-800 mb-4">Hub Not Found</h2>
       <button onClick={() => navigate(-1)} className="px-6 py-3 bg-indigo-600 text-white font-bold rounded-2xl shadow-sm hover:bg-indigo-700">Go Back</button>
     </div>
@@ -91,7 +91,7 @@ export default function HubDetail() {
   const isManager = user && hub.managerIds?.includes(user.uid);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans pb-safe">
+    <div className="h-full w-full overflow-y-auto bg-slate-50 flex flex-col font-sans pb-safe">
       <div className="relative h-64 bg-slate-200 shrink-0">
         {hub.photoUrl ? (
           <img src={hub.photoUrl} alt={hub.name} className="w-full h-full object-cover" />

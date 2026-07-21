@@ -97,51 +97,37 @@ export default function CatProfile() {
               status: d.data().status,
             }));
 
-            realHistory.sort((a, b) => b.time - a.time);
             let h = [...realHistory];
-            // limit to only 5
-            h = h.slice(0, 5);
-
-            const now = Date.now();
-            const hr = 3600000;
-            // We use the last_check_in as the first item if it exists and we don't have real logs
-            if (
-              realHistory.length === 0 &&
-              cat.last_check_in &&
-              cat.last_check_in.timestamp
-            ) {
-              const ts = (cat.last_check_in.timestamp as any)?.seconds
-                ? (cat.last_check_in.timestamp as any).seconds * 1000
-                : now;
-              h.push({
-                id: "h0",
-                time: ts,
-                fed: cat.last_check_in.was_fed,
-                health: cat.last_check_in.status_health || "Healthy",
-                notes: cat.last_check_in.notes || "",
-                user: user?.isAnonymous
-                  ? `Pawtaker #${user.uid.substring(user.uid.length - 4)}`
-                  : user?.displayName || "App User",
-                status: "approved",
-              });
-            }
-            // generate some old data placeholders?
-            if (h.length < 5) {
-              const need = 5 - h.length;
-              for (let i = 1; i <= need; i++) {
-                h.push({
-                  id: `h${i}`,
-                  time: now - i * 24 * hr - Math.random() * hr,
-                  fed: Math.random() > 0.3,
-                  health: Math.random() > 0.8 ? "Needs Attention" : "Healthy",
-                  notes: "",
-                  user: Math.random() > 0.5 ? "Anonymous" : "Caretaker",
-                  status: "approved",
-                });
+            
+            // Extract bunny upload timestamp if available
+            let bunnyTime = null;
+            if (cat.imageUrl) {
+              const match = cat.imageUrl.match(/straykin_(\d+)_/);
+              if (match && match[1]) {
+                bunnyTime = parseInt(match[1]);
               }
             }
 
+            // Include original submission if it exists
+            const creationTime = cat.createdAt ? (cat.createdAt as any).seconds * 1000 : 
+                                 bunnyTime ? bunnyTime :
+                                 (cat.last_check_in?.timestamp as any)?.seconds ? (cat.last_check_in.timestamp as any).seconds * 1000 : null;
+            
+            if (creationTime && !realHistory.find(item => Math.abs(item.time - creationTime) < 5000)) {
+              h.push({
+                id: "h_creation",
+                time: creationTime,
+                fed: cat.last_check_in?.was_fed || false,
+                health: cat.last_check_in?.status_health || "Healthy",
+                notes: "First spotted!",
+                user: "Community Member",
+                status: "approved",
+              });
+            }
+
             h.sort((a, b) => b.time - a.time);
+            h = h.slice(0, 5);
+
             setCheckInsHistory(h);
           });
         } catch (err) {
@@ -260,6 +246,9 @@ export default function CatProfile() {
   const captureWebcam = useCallback(() => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
+      if (navigator.vibrate) {
+        navigator.vibrate([100, 50, 100]);
+      }
       setPhotoDataUrl(imageSrc);
       setReportStep("form");
       setIsCameraActive(false);
@@ -819,6 +808,14 @@ export default function CatProfile() {
             {cat.locationName
               ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}`
               : "recently"}
+          </p>
+          
+          <p className="text-sm font-medium text-white/80 flex items-center gap-2 mb-4">
+            <span className="w-2.5 h-2.5 rounded-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.8)]"></span>
+            First spotted{" "}
+            {cat.createdAt ? new Date((cat.createdAt as any).seconds ? (cat.createdAt as any).seconds * 1000 : cat.createdAt).toLocaleDateString() : 
+             (cat.imageUrl && cat.imageUrl.match(/straykin_(\d+)_/)) ? new Date(parseInt(cat.imageUrl.match(/straykin_(\d+)_/)![1])).toLocaleDateString() :
+             (cat.last_check_in?.timestamp as any)?.seconds ? new Date((cat.last_check_in.timestamp as any).seconds * 1000).toLocaleDateString() : "recently"}
           </p>
 
           <p className="text-xs font-mono text-white/40 mb-2">ID: {cat.id}</p>

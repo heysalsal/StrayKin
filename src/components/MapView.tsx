@@ -39,8 +39,12 @@ import { CustomIcon } from "./CustomIcon";
 import { AdBanner } from "./AdBanner";
 import { useSettings } from "../context/SettingsContext";
 import { useError } from "../context/ErrorContext";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
+import "@tensorflow/tfjs";
+
 import { motion, AnimatePresence } from "motion/react";
 import Webcam from "react-webcam";
+import { checkIsAnimal, preloadAiModel } from "../utils/aiDetection";
 
 const safeGetStorage = (type: 'local' | 'session', key: string) => {
   try {
@@ -248,7 +252,11 @@ export default function MapView() {
   const [recenterCounter, setRecenterCounter] = useState(0);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const [modalStep, setModalStep] = useState<"camera" | "scan" | "form" | "guide" | "throwing">("camera");
+  const [useAiDetection, setUseAiDetection] = useState(import.meta.env.PROD);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [aiWarning, setAiWarning] = useState<string | null>(null);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
   const [pendingNavigation, setPendingNavigation] = useState<{
     url: string;
@@ -259,14 +267,29 @@ export default function MapView() {
 
   const [duplicates, setDuplicates] = useState<CatRecord[]>([]);
 
+  useEffect(() => {
+    preloadAiModel();
+  }, []);
+
   const webcamRef = useRef<Webcam>(null);
 
-  const captureWebcam = useCallback(() => {
+  const captureWebcam = useCallback(async () => {
     const imageSrc = webcamRef.current?.getScreenshot();
     if (imageSrc) {
       if (navigator.vibrate) {
         navigator.vibrate([100, 50, 100]); // Short double vibration pattern
       }
+
+      if (useAiDetection) {
+        setIsDetecting(true);
+        const { isValid, message } = await checkIsAnimal(imageSrc);
+        setIsDetecting(false);
+        if (!isValid) {
+          setAiWarning(message);
+          return; // Stop submission
+        }
+      }
+
       setPhotoDataUrl(imageSrc);
       setModalStep("throwing");
       
@@ -284,7 +307,7 @@ export default function MapView() {
         proceed([]);
       }
     }
-  }, [position]);
+  }, [position, useAiDetection]);
 
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -367,6 +390,7 @@ export default function MapView() {
       );
       if (!confirmClose) return;
     }
+    setAiWarning(null);
     setIsModalOpen(false);
     setDuplicates([]);
     setSelectedCatId(null);
@@ -535,7 +559,7 @@ export default function MapView() {
       const reader = new FileReader();
       reader.onload = (ev) => {
         const img = new Image();
-        img.onload = () => {
+        img.onload = async () => {
           const canvas = document.createElement("canvas");
           let width = img.width;
           let height = img.height;
@@ -556,13 +580,24 @@ export default function MapView() {
           canvas.width = Math.round(width);
           canvas.height = Math.round(height);
           const ctx = canvas.getContext("2d");
+          let finalImageSrc = ev.target?.result as string;
           if (ctx) {
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             // Output as JPEG with 0.7 quality to save space
-            setPhotoDataUrl(canvas.toDataURL("image/jpeg", 0.7));
-          } else {
-            setPhotoDataUrl(ev.target?.result as string);
+            finalImageSrc = canvas.toDataURL("image/jpeg", 0.7);
           }
+
+          if (useAiDetection) {
+            setIsDetecting(true);
+            const { isValid, message } = await checkIsAnimal(finalImageSrc);
+            setIsDetecting(false);
+            if (!isValid) {
+              setAiWarning(message);
+              return; // Stop submission
+            }
+          }
+
+          setPhotoDataUrl(finalImageSrc);
           setIsCameraActive(false);
 
           if (position) {
@@ -1185,11 +1220,15 @@ export default function MapView() {
                 e.stopPropagation();
                 e.preventDefault();
                 setIsMenuOpen(false);
-                navigate('/hubs');
+                if (!user || user.isAnonymous) {
+                  setShowLoginModal(true);
+                } else {
+                  navigate('/community');
+                }
               }}
               className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
             >
-              <span className="font-bold text-sm tracking-wide">Hub Center</span>
+              <span className="font-bold text-sm tracking-wide">Community</span>
               <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
                 <MapPin className="w-4 h-4" />
               </div>
@@ -1239,6 +1278,23 @@ export default function MapView() {
 
           {modalStep === "camera" ? (
             <div className="absolute inset-x-0 inset-y-0 bg-black z-50 flex flex-col pt-safe px-0 pb-0 overflow-hidden">
+              {aiWarning && (
+                <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-6 pointer-events-auto">
+                  <div className="bg-white rounded-3xl p-6 shadow-2xl flex flex-col items-center text-center max-w-sm animate-in fade-in zoom-in-95 duration-200">
+                    <div className="w-16 h-16 bg-rose-100 text-rose-500 rounded-full flex items-center justify-center mb-4">
+                      <AlertCircle className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-xl font-black text-slate-800 mb-2">Not a Stray</h3>
+                    <p className="text-slate-500 mb-6 font-medium leading-relaxed">{aiWarning}</p>
+                    <button
+                      onClick={() => setAiWarning(null)}
+                      className="w-full bg-slate-900 text-white font-bold rounded-full py-4 shadow-lg active:scale-95 transition-transform"
+                    >
+                      Try Again
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* @ts-ignore */}
               <Webcam
                 audio={false}
@@ -1259,14 +1315,21 @@ export default function MapView() {
                 <div className="p-4 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
                   <button
                     onClick={handleCloseModal}
-                    className="pointer-events-auto rounded-full w-10 h-10 flex items-center justify-center text-white bg-black/30 backdrop-blur-md"
+                    className="pointer-events-auto rounded-full w-10 h-10 flex items-center justify-center text-white bg-black/30 backdrop-blur-md shrink-0"
                   >
                     <X className="w-6 h-6" />
                   </button>
                   <h2 className="text-white font-bold text-lg tracking-wide drop-shadow-md">
                     Capture Straykin
                   </h2>
-                  <div className="w-10" /> {/* Spacer */}
+                  {!import.meta.env.PROD && (
+                    <button
+                      onClick={() => setUseAiDetection(!useAiDetection)}
+                      className={`pointer-events-auto shrink-0 flex items-center justify-center px-3 py-1.5 rounded-full text-xs font-bold transition-colors border border-white/20 ${useAiDetection ? 'bg-orange-500 text-white' : 'bg-black/30 text-white/70 backdrop-blur-md'}`}
+                    >
+                      AI {useAiDetection ? 'ON' : 'OFF'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Viewfinder brackets */}
@@ -1278,13 +1341,22 @@ export default function MapView() {
                 </div>
 
                 {/* Bottom Controls */}
-                <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent p-8 pb-safe-12 flex justify-center items-center pointer-events-auto w-full">
+                <div className="bg-gradient-to-t from-black/80 via-black/40 to-transparent p-8 pb-safe-12 flex justify-center items-center pointer-events-auto w-full relative">
+                  {isDetecting && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-10">
+                      <div className="flex flex-col items-center">
+                        <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-2" />
+                        <span className="text-white font-bold text-sm">Analyzing image...</span>
+                      </div>
+                    </div>
+                  )}
                   <button
                     onClick={(e) => {
                       e.preventDefault();
-                      captureWebcam();
+                      if (!isDetecting) captureWebcam();
                     }}
-                    className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-[0_0_0_6px_rgba(249,115,22,0.5)] active:scale-95 transition-transform"
+                    disabled={isDetecting}
+                    className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-[0_0_0_6px_rgba(249,115,22,0.5)] active:scale-95 transition-transform disabled:opacity-50"
                   >
                     <div className="w-16 h-16 rounded-full border-2 border-slate-200 flex items-center justify-center bg-white">
                       <div className="w-8 h-8 bg-orange-500 rounded-full" />
@@ -2066,6 +2138,36 @@ export default function MapView() {
                    )}
                  </div>
                </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLoginModal && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-6 w-full max-w-sm shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-black text-white mb-2">
+              Login Required
+            </h2>
+            <p className="text-slate-400 text-sm mb-6">
+              You need to be registered and logged in to access the community hub.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowLoginModal(false)}
+                className="flex-1 py-3 px-4 rounded-xl bg-slate-800 text-white font-bold text-sm hover:bg-slate-700 transition-colors"
+              >
+                Maybe later
+              </button>
+              <button
+                onClick={() => {
+                  setShowLoginModal(false);
+                  navigate("/login");
+                }}
+                className="flex-1 py-3 px-4 rounded-xl bg-indigo-500 text-white font-bold text-sm hover:bg-indigo-600 transition-colors shadow-lg shadow-indigo-500/20"
+              >
+                Login
+              </button>
             </div>
           </div>
         </div>
