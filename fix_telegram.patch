@@ -1,0 +1,11 @@
+--- server.ts
++++ server.ts
+@@ -244,7 +244,7 @@
+   bot.on("polling_error", (error: any) => {
+     if (error.code === "ETELEGRAM" && error.message.includes("409 Conflict")) {
+       console.warn("Telegram polling conflict: Another instance is running.");
+-    } else if (error.code === "EFATAL" || (error.message && error.message.includes("ECONNRESET"))) {
++    } else if (error.code === "EFATAL" || (error.message && (error.message.includes("ECONNRESET") || error.message.includes("socket hang up")))) {
+       // Ignore connection resets, the bot will auto-reconnect
+       console.debug("Telegram polling soft error (ECONNRESET). Auto-reconnecting...");
+     } else {

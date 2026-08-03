@@ -18,12 +18,14 @@ import PetProfile from './pages/PetProfile';
 import SharePage from './pages/SharePage';
 import CommunityPage from './pages/CommunityPage';
 import HubDetail from './pages/HubDetail';
+import UpdateLogPage from './pages/UpdateLogPage';
+import UpdateLogModal from './components/UpdateLogModal';
 import { CatProvider, useCatDatabase } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
 import { InstallPWA } from './components/InstallPWA';
-
 import { SettingsProvider } from './context/SettingsContext';
 import { ErrorProvider } from './context/ErrorContext';
+import { preloadAiModel } from './utils/aiDetection';
 
 function SplashScreen({ isReady, onComplete }: { isReady: boolean, onComplete: () => void }) {
   const [fade, setFade] = useState(false);
@@ -72,11 +74,16 @@ function MainLayout() {
   const { loading: catsLoading } = useCatDatabase();
 
   const isReady = !authLoading && !catsLoading;
+  useEffect(() => {
+    preloadAiModel();
+  }, []);
+
 
   return (
     <div className="flex flex-col h-screen w-full sm:max-w-md sm:mx-auto sm:border-x sm:border-slate-200 bg-[#e5e7eb] font-sans overflow-hidden sm:shadow-2xl relative">
       {showSplash && <SplashScreen isReady={isReady} onComplete={() => setShowSplash(false)} />}
       <InstallPWA />
+      <UpdateLogModal />
       
       <main className="flex-1 relative flex overflow-hidden">
         <Routes>
@@ -93,6 +100,7 @@ function MainLayout() {
           <Route path="/share" element={<SharePage />} />
           <Route path="/community" element={<CommunityPage />} />
           <Route path="/hub/:id" element={<HubDetail />} />
+          <Route path="/updates" element={<UpdateLogPage />} />
         </Routes>
       </main>
     </div>

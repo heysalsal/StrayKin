@@ -45,6 +45,7 @@ export function useLazyAuth() {
             displayName: currentUser.displayName || null,
             photoURL: currentUser.photoURL || null,
             isAnonymous: currentUser.isAnonymous,
+            createdAt: currentUser.metadata.creationTime ? new Date(currentUser.metadata.creationTime).toISOString() : new Date().toISOString(),
             lastLoginAt: new Date().toISOString()
           }, { merge: true });
         } catch (err) {
@@ -108,6 +109,7 @@ export function useLazyAuth() {
           displayName: result.user.displayName || null,
           photoURL: result.user.photoURL || null,
           isAnonymous: result.user.isAnonymous,
+          createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
           lastLoginAt: new Date().toISOString()
         }, { merge: true });
       } catch (err) {
@@ -141,6 +143,7 @@ export function useLazyAuth() {
           displayName: displayName || null,
           photoURL: result.user.photoURL || null,
           isAnonymous: result.user.isAnonymous,
+          createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
           lastLoginAt: new Date().toISOString()
         }, { merge: true });
       } catch (err) {
@@ -168,6 +171,7 @@ export function useLazyAuth() {
             displayName: result.user.displayName || null,
             photoURL: result.user.photoURL || null,
             isAnonymous: result.user.isAnonymous,
+            createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
             lastLoginAt: new Date().toISOString()
           }, { merge: true });
         } catch (err) {

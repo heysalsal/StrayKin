@@ -9,7 +9,7 @@ import { getFirestore, doc, updateDoc, getDoc, collection, query as fsQuery, whe
 const app = express();
 const PORT = 3000;
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "50mb" }));
 
 // Initialize Firebase
 const configPath = path.join(process.cwd(), "firebase-applet-config.json");
@@ -246,12 +246,14 @@ if (token) {
   bot.on("polling_error", (error: any) => {
     if (error.code === "ETELEGRAM" && error.message.includes("409 Conflict")) {
       console.warn("Telegram polling conflict: Another instance is running.");
-    } else if (error.code === "EFATAL" || (error.message && error.message.includes("ECONNRESET"))) {
+    } else if (error.code === "EFATAL" || (error.message && (error.message.includes("ECONNRESET") || error.message.includes("socket hang up")))) {
       // Ignore connection resets, the bot will auto-reconnect
-      console.debug("Telegram polling soft error (ECONNRESET). Auto-reconnecting...");
     } else {
       console.error("Telegram polling error:", error);
     }
+  });
+  bot.on("error", (error: any) => {
+    console.error("Telegram general error:", error);
   });
 
   process.once("SIGINT", () => bot?.stopPolling());

@@ -80,11 +80,11 @@ const createMarkerIcon = (
   cat: CatRecord,
 ) => {
   let colorClass = isFedRecently ? "bg-emerald-500" : "bg-orange-400";
-  let innerContent = "🐾";
+  let innerContent = "ð¾";
 
   if (cat.status === "under_review") {
     colorClass = "bg-amber-400";
-    innerContent = "⏳";
+    innerContent = "â³";
   } else if (cat.imageUrl) {
     innerContent = `<img src="${cat.imageUrl}" style="width: 100%; height: 100%; object-fit: cover; border-radius: 9999px;" />`;
   }
@@ -254,6 +254,7 @@ export default function MapView() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [modalStep, setModalStep] = useState<"camera" | "scan" | "form" | "guide" | "throwing">("camera");
+  // @ts-ignore
   const [useAiDetection, setUseAiDetection] = useState(import.meta.env.PROD);
   const [isDetecting, setIsDetecting] = useState(false);
   const [aiWarning, setAiWarning] = useState<string | null>(null);
@@ -280,32 +281,60 @@ export default function MapView() {
         navigator.vibrate([100, 50, 100]); // Short double vibration pattern
       }
 
-      if (useAiDetection) {
-        setIsDetecting(true);
-        const { isValid, message } = await checkIsAnimal(imageSrc);
-        setIsDetecting(false);
-        if (!isValid) {
-          setAiWarning(message);
-          return; // Stop submission
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement("canvas");
+        let width = img.width;
+        let height = img.height;
+        const MAX_SIZE = 800; // max width or height
+        if (width > height) {
+          if (width > MAX_SIZE) {
+             height *= MAX_SIZE / width;
+             width = MAX_SIZE;
+          }
+        } else {
+           if (height > MAX_SIZE) {
+             width *= MAX_SIZE / height;
+             height = MAX_SIZE;
+          }
         }
-      }
+        canvas.width = Math.round(width);
+        canvas.height = Math.round(height);
+        const ctx = canvas.getContext("2d");
+        let finalImageSrc = imageSrc;
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          finalImageSrc = canvas.toDataURL("image/jpeg", 0.7);
+        }
 
-      setPhotoDataUrl(imageSrc);
-      setModalStep("throwing");
-      
-      const proceed = (nearby: any[]) => {
-        setDuplicates(nearby);
-        setCurrentIdx(0);
-        setTimeout(() => {
-          setModalStep("scan");
-        }, 1200); // 1.2s for throwing animation
+        if (useAiDetection) {
+          setIsDetecting(true);
+          const { isValid, message } = await checkIsAnimal(finalImageSrc);
+          setIsDetecting(false);
+          if (!isValid) {
+            setAiWarning(message);
+            return; // Stop submission
+          }
+        }
+
+        setPhotoDataUrl(finalImageSrc);
+        setModalStep("throwing");
+        
+        const proceed = (nearby: any[]) => {
+          setDuplicates(nearby);
+          setCurrentIdx(0);
+          setTimeout(() => {
+            setModalStep("scan");
+          }, 1200); // 1.2s for throwing animation
+        };
+
+        if (position) {
+          fetchNearbyCats(position[0], position[1], 500).then(proceed);
+        } else {
+          proceed([]);
+        }
       };
-
-      if (position) {
-        fetchNearbyCats(position[0], position[1], 500).then(proceed);
-      } else {
-        proceed([]);
-      }
+      img.src = imageSrc;
     }
   }, [position, useAiDetection]);
 
@@ -912,7 +941,7 @@ export default function MapView() {
             alt="Straykin"
             className="w-full h-full object-contain"
             onError={(e) => {
-               (e.target as HTMLImageElement).outerHTML = '<div class="text-7xl animate-bounce">🐾</div>';
+               (e.target as HTMLImageElement).outerHTML = '<div class="text-7xl animate-bounce">ð¾</div>';
             }}
           />
         </div>
@@ -1024,7 +1053,7 @@ export default function MapView() {
                         />
                       ) : (
                         <span className="flex items-center justify-center h-full text-4xl bg-slate-100 border border-slate-200">
-                          😿
+                          ð¿
                         </span>
                       )}
                     </div>
@@ -1322,6 +1351,7 @@ export default function MapView() {
                   <h2 className="text-white font-bold text-lg tracking-wide drop-shadow-md">
                     Capture Straykin
                   </h2>
+                  {/* @ts-ignore */}
                   {!import.meta.env.PROD && (
                     <button
                       onClick={() => setUseAiDetection(!useAiDetection)}
@@ -1409,15 +1439,15 @@ export default function MapView() {
                 </div>
                 <div className="flex flex-col gap-4 text-slate-600 mb-8 font-medium">
                   <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl">
-                    <span className="text-2xl">📸</span>
+                    <span className="text-2xl">ð¸</span>
                     <p className="text-sm">Ensure the stray is clearly visible and well-lit.</p>
                   </div>
                   <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl">
-                    <span className="text-2xl">🐈</span>
+                    <span className="text-2xl">ð</span>
                     <p className="text-sm">Keep a safe distance so you don't scare them.</p>
                   </div>
                   <div className="flex items-center gap-3 bg-slate-50 p-4 rounded-2xl">
-                    <span className="text-2xl">🔍</span>
+                    <span className="text-2xl">ð</span>
                     <p className="text-sm">Avoid blurry photos by holding your phone steady.</p>
                   </div>
                 </div>
@@ -1482,7 +1512,7 @@ export default function MapView() {
                                     />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center text-6xl pointer-events-none bg-slate-100">
-                                      🐈
+                                      ð
                                     </div>
                                   )}
                                 </div>
@@ -1574,7 +1604,7 @@ export default function MapView() {
                                     />
                                   ) : (
                                     <div className="w-full h-full flex items-center justify-center text-6xl pointer-events-none bg-slate-100">
-                                      🐈
+                                      ð
                                     </div>
                                   )}
                                 </div>
@@ -1635,7 +1665,7 @@ export default function MapView() {
                   ) : (
                     <div className="text-center py-10 mb-4 bg-slate-50 rounded-3xl border border-slate-100">
                       <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center text-4xl mx-auto mb-4">
-                        😿
+                        ð¿
                       </div>
                       <h3 className="font-bold text-slate-800 text-xl">
                         No Straykin Nearby
@@ -1697,7 +1727,7 @@ export default function MapView() {
                                 />
                               ) : (
                                 <div className="w-full h-full bg-orange-100 flex items-center justify-center text-2xl">
-                                  🐈
+                                  ð
                                 </div>
                               )}
                             </div>
@@ -2119,11 +2149,11 @@ export default function MapView() {
                        {pet.photoDataUrl ? (
                          <img src={pet.photoDataUrl} className="w-14 h-14 rounded-lg object-cover" />
                        ) : (
-                         <div className="w-14 h-14 rounded-lg bg-slate-200 flex items-center justify-center border border-slate-300">🐾</div>
+                         <div className="w-14 h-14 rounded-lg bg-slate-200 flex items-center justify-center border border-slate-300">ð¾</div>
                        )}
                        <div className="flex-1 min-w-0">
                          <h4 className="font-bold text-slate-800 truncate leading-tight">{pet.name}</h4>
-                         <p className="text-xs text-slate-500 truncate">{pet.breed} • {pet.age}</p>
+                         <p className="text-xs text-slate-500 truncate">{pet.breed} â¢ {pet.age}</p>
                        </div>
                        <div>
                          <span className={`text-[9px] font-black uppercase px-2 py-1 rounded border ${pet.status === 'Resident Cat' ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-emerald-50 text-emerald-600 border-emerald-200'}`}>

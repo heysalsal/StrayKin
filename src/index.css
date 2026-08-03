@@ -3,6 +3,39 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-primary-50: #fff0e6;
+  --color-primary-100: #ffd4b3;
+  --color-primary-200: #ffb880;
+  --color-primary-300: #ff9d4d;
+  --color-primary-400: #ff811a;
+  --color-primary-500: #ff6900;
+  --color-primary-600: #e65e00;
+  --color-primary-700: #b34900;
+  --color-primary-800: #803400;
+  --color-primary-900: #4d1f00;
+
+  --color-orange-50: var(--color-primary-50);
+  --color-orange-100: var(--color-primary-100);
+  --color-orange-200: var(--color-primary-200);
+  --color-orange-300: var(--color-primary-300);
+  --color-orange-400: var(--color-primary-400);
+  --color-orange-500: var(--color-primary-500);
+  --color-orange-600: var(--color-primary-600);
+  --color-orange-700: var(--color-primary-700);
+  --color-orange-800: var(--color-primary-800);
+  --color-orange-900: var(--color-primary-900);
+  
+  --color-indigo-50: var(--color-primary-50);
+  --color-indigo-100: var(--color-primary-100);
+  --color-indigo-200: var(--color-primary-200);
+  --color-indigo-300: var(--color-primary-300);
+  --color-indigo-400: var(--color-primary-400);
+  --color-indigo-500: var(--color-primary-500);
+  --color-indigo-600: var(--color-primary-600);
+  --color-indigo-700: var(--color-primary-700);
+  --color-indigo-800: var(--color-primary-800);
+  --color-indigo-900: var(--color-primary-900);
 }
 
 @layer utilities {
@@ -25,12 +58,6 @@
 }
 
 /* Add custom focus mode styling requested by the user */
-div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(2) {
-  margin-bottom: 16px;
-  margin-right: 0px;
-  padding-left: 45px;
-  padding-right: 0px;
-}
-
-div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) {
+div#root:nth-of-type(1) > div:nth-of-type(1) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) {
+  background-color: #ff6900;
 }

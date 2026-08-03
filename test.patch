@@ -1,0 +1,87 @@
+--- src/components/MapView.tsx
++++ src/components/MapView.tsx
+@@ -280,31 +280,51 @@
+       if (navigator.vibrate) {
+         navigator.vibrate([100, 50, 100]); // Short double vibration pattern
+       }
+ 
+-      if (useAiDetection) {
+-        setIsDetecting(true);
+-        const { isValid, message } = await checkIsAnimal(imageSrc);
+-        setIsDetecting(false);
+-        if (!isValid) {
+-          setAiWarning(message);
+-          return; // Stop submission
++      const img = new Image();
++      img.onload = async () => {
++        const canvas = document.createElement("canvas");
++        let width = img.width;
++        let height = img.height;
++        const MAX_SIZE = 800; // max width or height
++        if (width > height) {
++          if (width > MAX_SIZE) {
++             height *= MAX_SIZE / width;
++             width = MAX_SIZE;
++          }
++        } else {
++           if (height > MAX_SIZE) {
++             width *= MAX_SIZE / height;
++             height = MAX_SIZE;
++          }
+         }
+-      }
+-
+-      setPhotoDataUrl(imageSrc);
+-      setModalStep("throwing");
+-      
+-      const proceed = (nearby: any[]) => {
+-        setDuplicates(nearby);
+-        setCurrentIdx(0);
+-        setTimeout(() => {
+-          setModalStep("scan");
+-        }, 1200); // 1.2s for throwing animation
+-      };
+-
+-      if (position) {
+-        fetchNearbyCats(position[0], position[1], 500).then(proceed);
+-      } else {
+-        proceed([]);
+-      }
++        canvas.width = Math.round(width);
++        canvas.height = Math.round(height);
++        const ctx = canvas.getContext("2d");
++        let finalImageSrc = imageSrc;
++        if (ctx) {
++          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
++          finalImageSrc = canvas.toDataURL("image/jpeg", 0.7);
++        }
++        
++        if (useAiDetection) {
++          setIsDetecting(true);
++          const { isValid, message } = await checkIsAnimal(finalImageSrc);
++          setIsDetecting(false);
++          if (!isValid) {
++            setAiWarning(message);
++            return; // Stop submission
++          }
++        }
++        setPhotoDataUrl(finalImageSrc);
++        setModalStep("throwing");
++        
++        const proceed = (nearby: any[]) => {
++          setDuplicates(nearby);
++          setCurrentIdx(0);
++          setTimeout(() => {
++            setModalStep("scan");
++          }, 1200); // 1.2s for throwing animation
++        };
++        
++        if (position) {
++          fetchNearbyCats(position[0], position[1], 500).then(proceed);
++        } else {
++          proceed([]);
++        }
++      };
++      img.src = imageSrc;
+     }
+   }, [position, useAiDetection]);

@@ -1449,8 +1449,15 @@ export default function AccountPage() {
           <div className="space-y-4">
             <div className="bg-white rounded-[2rem] p-4 shadow-sm border border-slate-200">
               <button
-                onClick={() => navigate("/privacy")}
+                onClick={() => navigate("/updates")}
                 className="w-full flex items-center justify-between p-4 hover:bg-slate-50 rounded-xl transition-colors"
+              >
+                <span className="font-bold text-slate-700">Update Log</span>
+                <ExternalLink className="w-4 h-4 text-slate-400" />
+              </button>
+              <button
+                onClick={() => navigate("/privacy")}
+                className="w-full flex items-center justify-between p-4 hover:bg-slate-50 rounded-xl transition-colors border-t border-slate-100"
               >
                 <span className="font-bold text-slate-700">Privacy Policy</span>
                 <ExternalLink className="w-4 h-4 text-slate-400" />
