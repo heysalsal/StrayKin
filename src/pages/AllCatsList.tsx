@@ -92,7 +92,7 @@ export default function AllCatsList() {
               </div>
             </button>
             {(index + 1) % 3 === 0 && (
-              <AdBanner format="homeBanner" />
+              <AdBanner format="homeBanner" forceShowOnAndroid={true} />
             )}
           </React.Fragment>
         ))}

@@ -44,7 +44,8 @@ import "@tensorflow/tfjs";
 
 import { motion, AnimatePresence } from "motion/react";
 import Webcam from "react-webcam";
-import { checkIsAnimal, preloadAiModel } from "../utils/aiDetection";
+import { checkIsAnimal, preloadAiModel, isModelReady } from "../utils/aiDetection";
+import { addPendingSubmission } from "../utils/aiQueue";
 
 const safeGetStorage = (type: 'local' | 'session', key: string) => {
   try {
@@ -255,7 +256,7 @@ export default function MapView() {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [modalStep, setModalStep] = useState<"camera" | "scan" | "form" | "guide" | "throwing">("camera");
   // @ts-ignore
-  const [useAiDetection, setUseAiDetection] = useState(import.meta.env.PROD);
+  const [useAiDetection, setUseAiDetection] = useState(true);
   const [isDetecting, setIsDetecting] = useState(false);
   const [aiWarning, setAiWarning] = useState<string | null>(null);
   const [selectedCatId, setSelectedCatId] = useState<string | null>(null);
@@ -307,7 +308,7 @@ export default function MapView() {
           finalImageSrc = canvas.toDataURL("image/jpeg", 0.7);
         }
 
-        if (useAiDetection) {
+        if (useAiDetection && isModelReady()) {
           setIsDetecting(true);
           const { isValid, message } = await checkIsAnimal(finalImageSrc);
           setIsDetecting(false);
@@ -315,6 +316,8 @@ export default function MapView() {
             setAiWarning(message);
             return; // Stop submission
           }
+        } else if (useAiDetection && !isModelReady()) {
+          console.log("Model not ready yet, bypassing initial AI check.");
         }
 
         setPhotoDataUrl(finalImageSrc);
@@ -616,7 +619,7 @@ export default function MapView() {
             finalImageSrc = canvas.toDataURL("image/jpeg", 0.7);
           }
 
-          if (useAiDetection) {
+          if (useAiDetection && isModelReady()) {
             setIsDetecting(true);
             const { isValid, message } = await checkIsAnimal(finalImageSrc);
             setIsDetecting(false);
@@ -624,6 +627,8 @@ export default function MapView() {
               setAiWarning(message);
               return; // Stop submission
             }
+          } else if (useAiDetection && !isModelReady()) {
+            console.log("Model not ready yet, bypassing initial AI check.");
           }
 
           setPhotoDataUrl(finalImageSrc);
@@ -837,7 +842,7 @@ export default function MapView() {
       };
 
       let docIdForReview = "";
-      // Save locally to show in list as under review (don't save huge base64 string to firestore)
+      // Save locally to show in list as under review
       if (selectedCatId) {
         const checkInRes = await addCheckInLog({
           catId: selectedCatId,
@@ -845,7 +850,7 @@ export default function MapView() {
           healthStatus: (details as any).healthStatus || "Good",
           notes: details.notes || "",
           geo_point: null,
-          photoDataUrl: null, // Defer image save to avoid Firestore limits until approved
+          photoDataUrl: photoDataUrl, // Send image to cache preview while under review
           status: "under_review",
           submissionId,
           submittedBy: user?.uid,
@@ -859,7 +864,7 @@ export default function MapView() {
           geohash,
           {
             ...details,
-            photoDataUrl: null,
+            photoDataUrl: photoDataUrl, // Send image to cache preview while under review
             status: "under_review",
             submissionId,
             submittedBy: user?.uid,
@@ -873,23 +878,76 @@ export default function MapView() {
         }
       }
 
-      fetch("/api/submit-for-review", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...reqBody, docIdForReview }),
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (reqBody.details.catId) {
-          updateCatSighting(reqBody.details.catId, { 
-            status: data.status, // might be 'approved' or 'under_review'
-            isCheckIn: reqBody.type === "check_in",
-            addToGallery: reqBody.details.addToGallery,
-            ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
-          });
-        }
-      })
-      .catch(err => console.error("Background review failed", err));
+      if (useAiDetection && !isModelReady()) {
+        console.log("Queueing submission for background AI check...");
+        addPendingSubmission({
+           id: submissionId,
+           imageSrc: photoDataUrl || reqBody.imageBase64,
+           reqBody: { ...reqBody, docIdForReview },
+           timestamp: Date.now()
+        });
+      } else if (useAiDetection && isModelReady()) {
+        // The model finished loading while the user was filling out the form, 
+        // or we just want to be absolutely sure.
+        console.log("Model is ready, performing final AI check before submission...");
+        const finalImageSrc = photoDataUrl || reqBody.imageBase64;
+        checkIsAnimal(finalImageSrc).then(({ isValid, message }) => {
+            if (!isValid) {
+                console.warn("Final AI check failed:", message);
+                // Delete the temporary Firestore document if rejected
+                import('firebase/firestore').then(({ deleteDoc, doc }) => {
+                    import('../config/firebase').then(({ db }) => {
+                        const coll = reqBody.type === "check_in" ? "check_ins" : "strays";
+                        deleteDoc(doc(db, coll, docIdForReview));
+                    });
+                });
+                if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.showToast === 'function') {
+                    (window as any).AndroidLauncher.showToast("Your submission was rejected: " + message);
+                } else {
+                    alert("Your submission was rejected: " + message);
+                }
+                setIsSubmitting(false);
+                setIsModalOpen(false);
+            } else {
+                // It passed, send to server
+                fetch("/api/submit-for-review", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ ...reqBody, docIdForReview }),
+                })
+                .then(res => res.json())
+                .then(data => {
+                  if (reqBody.details.catId) {
+                    updateCatSighting(reqBody.details.catId, { 
+                        status: data.status,
+                      isCheckIn: reqBody.type === "check_in",
+                      addToGallery: reqBody.details.addToGallery,
+                      ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+                    });
+                  }
+                })
+                .catch(err => console.error("Background review failed", err));
+            }
+        });
+      } else {
+        fetch("/api/submit-for-review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...reqBody, docIdForReview }),
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (reqBody.details.catId) {
+            updateCatSighting(reqBody.details.catId, { 
+                status: data.status,
+              isCheckIn: reqBody.type === "check_in",
+              addToGallery: reqBody.details.addToGallery,
+              ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+            });
+          }
+        })
+        .catch(err => console.error("Background review failed", err));
+      }
       
       processGamificationRewards(docIdForReview);
     } catch (err: any) {
@@ -1286,7 +1344,7 @@ export default function MapView() {
         <div className="pointer-events-auto flex flex-col gap-3">
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className={`w-[80px] h-[80px] mx-0 pt-0 mt-0 mb-[60px] rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? "bg-orange-600 text-white rotate-45" : "bg-orange-500 text-white"}`}
+            className={`w-[80px] h-[80px] mx-0 pt-0 mt-0 ${typeof window !== 'undefined' && (window as any).AndroidLauncher ? "mb-0" : "mb-[60px]"} rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.15)] border border-white flex items-center justify-center transition-all duration-300 active:scale-90 ${isMenuOpen ? "bg-orange-600 text-white rotate-45" : "bg-orange-500 text-white"}`}
           >
             <CustomIcon
               src="/icon-menu.png"

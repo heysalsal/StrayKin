@@ -1,20 +1,95 @@
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
 import '@tensorflow/tfjs';
+import { getPendingSubmissions, removePendingSubmission } from './aiQueue';
 
 let cachedModel: cocoSsd.ObjectDetection | null = null;
 let modelPromise: Promise<cocoSsd.ObjectDetection> | null = null;
+
+export const isModelReady = () => cachedModel !== null;
 
 export const preloadAiModel = async () => {
   if (cachedModel) return;
   if (modelPromise) return modelPromise;
   
   console.log("Preloading COCO-SSD model in background...");
-  modelPromise = cocoSsd.load();
+  
+  let config = undefined;
+  if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.getAiModelUrl === 'function') {
+    const localUrl = (window as any).AndroidLauncher.getAiModelUrl();
+    if (localUrl) {
+      console.log("Using local AI model URL provided by Android:", localUrl);
+      config = { modelUrl: localUrl };
+    }
+  }
+
+  modelPromise = cocoSsd.load(config);
   try {
     cachedModel = await modelPromise;
     console.log("Model preloaded successfully.");
+    processAiQueue();
   } catch (error) {
     console.error("Failed to preload model:", error);
+  }
+};
+
+export const processAiQueue = async () => {
+  try {
+    const pending = await getPendingSubmissions();
+    if (pending.length === 0) return;
+    
+    console.log(`Processing ${pending.length} pending submissions...`);
+    for (const sub of pending) {
+      console.log(`AI checking pending submission ${sub.id}`);
+      const { isValid, message } = await checkIsAnimal(sub.imageSrc);
+      
+      if (isValid) {
+        // Submit to backend
+        try {
+          const res = await fetch("/api/submit-for-review", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(sub.reqBody),
+          });
+          const data = await res.json();
+          
+          if (sub.reqBody.details?.catId) {
+            const { updateDoc, doc } = await import('firebase/firestore');
+            const { db } = await import('../config/firebase');
+            await updateDoc(doc(db, "strays", sub.reqBody.details.catId), { 
+               status: data.status,
+               isCheckIn: sub.reqBody.type === "check_in",
+               addToGallery: sub.reqBody.details.addToGallery,
+               ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+            });
+          }
+        } catch (e) {
+          console.error("Failed to submit pending request", e);
+        }
+      } else {
+        // Not an animal
+        console.warn(`Pending submission ${sub.id} failed AI check: ${message}`);
+        
+        // Delete the firestore doc so it's not sent to the database
+        if (sub.reqBody.docIdForReview) {
+            const { deleteDoc, doc } = await import('firebase/firestore');
+            const { db } = await import('../config/firebase');
+            const coll = sub.reqBody.type === "check_in" ? "check_ins" : "strays";
+            await deleteDoc(doc(db, coll, sub.reqBody.docIdForReview));
+        }
+        
+        // Notify user if possible
+        if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.showToast === 'function') {
+           (window as any).AndroidLauncher.showToast("Your recent submission was rejected: " + message);
+        } else if (typeof window !== 'undefined') {
+           // Not ideal for background but okay for PWA if they are still on page
+           alert("Your recent submission was rejected: " + message);
+        }
+      }
+      
+      await removePendingSubmission(sub.id);
+    }
+  } catch (e) {
+    console.error("Error processing AI queue", e);
   }
 };
 
@@ -33,7 +108,14 @@ export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean
         cachedModel = await modelPromise;
       } else {
         console.log("Loading COCO-SSD model...");
-        cachedModel = await cocoSsd.load();
+        let config = undefined;
+        if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.getAiModelUrl === 'function') {
+          const localUrl = (window as any).AndroidLauncher.getAiModelUrl();
+          if (localUrl) {
+            config = { modelUrl: localUrl };
+          }
+        }
+        cachedModel = await cocoSsd.load(config);
         console.log("Model loaded.");
       }
     }
@@ -58,6 +140,6 @@ export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean
     return { isValid: true, message: 'Animal detected successfully!' };
   } catch (error) {
     console.error("AI Detection failed:", error);
-    return { isValid: true, message: 'Detection failed, bypassing.' };
+    return { isValid: false, message: 'AI model failed to load or process the image. Please wait for the download to finish or check your connection.' };
   }
 };

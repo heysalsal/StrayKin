@@ -29,6 +29,37 @@ export default function PetProfile() {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.showInterstitialAd === 'function') {
+      const lastAdTime = sessionStorage.getItem('lastNativeAdTime');
+      const now = Date.now();
+      if (!lastAdTime || now - parseInt(lastAdTime) > 30000) {
+        (window as any).AndroidLauncher.showInterstitialAd();
+        sessionStorage.setItem('lastNativeAdTime', now.toString());
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!pet && id) {
+      let isMounted = true;
+      const fetchPet = async () => {
+        try {
+          const { doc, getDoc } = await import("firebase/firestore");
+          const { db } = await import("../config/firebase");
+          const snap = await getDoc(doc(db, "pets", id));
+          if (snap.exists() && isMounted) {
+            setPet({ id: snap.id, ...snap.data() });
+          }
+        } catch (err) {
+          console.error("Failed to fetch pet profile:", err);
+        }
+      };
+      fetchPet();
+      return () => { isMounted = false; };
+    }
+  }, [pet, id]);
+
+  useEffect(() => {
     if (showShare && window.location.href) {
       const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(window.location.href)}`;
       fetch(`/api/proxy-image?url=${encodeURIComponent(qrUrl)}`)

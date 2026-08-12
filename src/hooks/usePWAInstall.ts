@@ -22,7 +22,11 @@ export function usePWAInstall() {
       window.matchMedia('(display-mode: standalone)').matches || 
       (window.navigator as any).standalone === true || document.referrer.includes('android-app://');
       
-    if (isStandaloneMode) {
+    const isNativeAndroidBridge = (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.isNativeApp === 'function' && (window as any).AndroidLauncher.isNativeApp();
+    const isNativeAndroidUserAgent = window.navigator.userAgent.includes("StraykinAndroidApp");
+    const isNativeApp = isNativeAndroidBridge || isNativeAndroidUserAgent || (window as any).__NATIVE_APP__;
+
+    if (isStandaloneMode || isNativeApp) {
       setIsStandalone(true);
     }
 

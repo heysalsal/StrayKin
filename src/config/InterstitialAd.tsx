@@ -17,6 +17,12 @@ export function InterstitialAd({ isOpen, targetAlias = 'Pet', onComplete, onCanc
 
   useEffect(() => {
     if (isOpen) {
+      if (typeof window !== 'undefined' && (window as any).AndroidLauncher && (window as any).AndroidLauncher.showInterstitialAd) {
+        (window as any).AndroidLauncher.showInterstitialAd();
+        onComplete();
+        return;
+      }
+
       setTimeLeft(5);
       setCanClose(false);
       timerRef.current = setInterval(() => {

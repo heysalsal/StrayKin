@@ -5,6 +5,7 @@ import { usePWAInstall } from "../hooks/usePWAInstall";
 import { useNavigate } from "react-router-dom";
 import { CustomIcon } from "../components/CustomIcon";
 import { AdBanner } from "../components/AdBanner";
+import { InterstitialAd } from "../config/InterstitialAd";
 import { usePushNotifications } from "../hooks/usePushNotifications";
 import { useSettings } from "../context/SettingsContext";
 import {
@@ -105,6 +106,13 @@ export default function AccountPage() {
   const [subTabSearchQuery, setSubTabSearchQuery] = useState("");
   const [subTabCurrentPage, setSubTabCurrentPage] = useState(1);
   const itemsPerPage = 5;
+
+  const [pendingNavigation, setPendingNavigation] = useState<{
+    url: string;
+    alias: string;
+    cat?: any;
+    pet?: any;
+  } | null>(null);
 
   useEffect(() => {
     setSubTabCurrentPage(1);
@@ -874,9 +882,16 @@ export default function AccountPage() {
                 Unregistered
               </p>
             ) : (
-              <p className="text-xs font-bold text-orange-600 bg-orange-50 inline-block px-2 py-0.5 rounded-md mt-1 border border-orange-100 uppercase tracking-wide">
-                {profile.active_title || "Neighborhood Caretaker"}
-              </p>
+              <div className="flex flex-col items-start gap-1 mt-1">
+                <p className="text-xs font-bold text-orange-600 bg-orange-50 inline-block px-2 py-0.5 rounded-md border border-orange-100 uppercase tracking-wide">
+                  {profile.active_title || "Neighborhood Caretaker"}
+                </p>
+                {user.metadata?.creationTime && (
+                  <p className="text-xs text-slate-500 font-medium">
+                    Member since {new Date(user.metadata.creationTime).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+                  </p>
+                )}
+              </div>
             )}
 
             {user && !user.isAnonymous && user && !user.emailVerified && (
@@ -959,7 +974,7 @@ export default function AccountPage() {
       )}
 
       <div className="px-4 pt-4 flex justify-center">
-        <AdBanner format="rectangle" />
+        <AdBanner format="rectangle" forceShowOnAndroid={true} />
       </div>
 
       <div className="p-4 space-y-6">
@@ -1038,7 +1053,7 @@ export default function AccountPage() {
                       .map((cat, index) => (
                         <React.Fragment key={cat.id}>
                           <button
-                            onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
+                            onClick={() => setPendingNavigation({ url: `/cat/${cat.id}`, alias: cat.name || "Stray", cat })}
                             className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
                           >
                             <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
@@ -1094,7 +1109,7 @@ export default function AccountPage() {
                             </button>
                             {index === 2 && (
                               <div className="w-full h-[90px] overflow-hidden my-2 border border-slate-100 rounded-xl bg-slate-50">
-                                <AdBanner format="homeBanner" />
+                                <AdBanner format="homeBanner" forceShowOnAndroid={true} />
                               </div>
                             )}
                           </React.Fragment>
@@ -1147,7 +1162,7 @@ export default function AccountPage() {
                       .map((cat, index) => (
                         <React.Fragment key={cat.id}>
                           <button
-                            onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
+                            onClick={() => setPendingNavigation({ url: `/cat/${cat.id}`, alias: cat.name || "Stray", cat })}
                             className="w-full text-left bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex gap-4 hover:bg-slate-50 transition-colors active:scale-95 flex-shrink-0"
                           >
                             <div className="w-16 h-16 bg-slate-200 rounded-2xl overflow-hidden shrink-0">
@@ -1186,7 +1201,7 @@ export default function AccountPage() {
                           </button>
                           {index === 2 && (
                             <div className="w-full h-[90px] overflow-hidden my-2 border border-slate-100 rounded-xl bg-slate-50">
-                              <AdBanner format="homeBanner" />
+                              <AdBanner format="homeBanner" forceShowOnAndroid={true} />
                             </div>
                           )}
                         </React.Fragment>
@@ -1591,7 +1606,7 @@ export default function AccountPage() {
                       >
                         <button
                           key={cat.id}
-                          onClick={() => navigate(`/cat/${cat.id}`, { state: { cat } })}
+                          onClick={() => setPendingNavigation({ url: `/cat/${cat.id}`, alias: cat.name || "Stray", cat })}
                           className="flex gap-4 items-center text-left hover:opacity-80 transition-opacity"
                         >
                           <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-3xl shrink-0 overflow-hidden shadow-inner border-4 border-white">
@@ -1626,7 +1641,7 @@ export default function AccountPage() {
                       className={`p-5 rounded-3xl border-2 transition-colors flex flex-col gap-4 ${pet.status === "lost" ? "border-red-500 bg-red-50" : "border-indigo-100 bg-indigo-50/30"}`}
                     >
                       <button
-                        onClick={() => navigate(`/pet/${pet.id}`, { state: { pet } })}
+                        onClick={() => setPendingNavigation({ url: `/pet/${pet.id}`, alias: pet.name || "Pet", pet })}
                         className="flex gap-4 items-center text-left hover:opacity-80 transition-opacity"
                       >
                         <div className="w-16 h-16 bg-slate-200 rounded-full flex items-center justify-center text-3xl shrink-0 overflow-hidden shadow-inner border-4 border-white">
@@ -2105,6 +2120,17 @@ export default function AccountPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {pendingNavigation && (
+          <InterstitialAd
+            isOpen={true}
+            targetAlias={pendingNavigation.alias}
+            onComplete={() => {
+              navigate(pendingNavigation.url, { state: { cat: pendingNavigation.cat, pet: pendingNavigation.pet } });
+              setPendingNavigation(null);
+            }}
+          />
         )}
       </div>
     </div>

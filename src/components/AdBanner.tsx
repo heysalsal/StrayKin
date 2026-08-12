@@ -3,9 +3,14 @@ import React from 'react';
 interface AdBannerProps {
   className?: string;
   format?: 'banner' | 'homeBanner' | 'rectangle' | 'skyscraper';
+  forceShowOnAndroid?: boolean;
 }
 
-export function AdBanner({ className = '', format = 'banner' }: AdBannerProps) {
+export function AdBanner({ className = '', format = 'banner', forceShowOnAndroid = false }: AdBannerProps) {
+  if (!forceShowOnAndroid && typeof window !== 'undefined' && (window as any).AndroidLauncher) {
+    return null; // Hides Adsterra banner on Android
+  }
+
   let containerClasses = "";
   let adSource = "/ad-300x250.html";
 
@@ -27,7 +32,7 @@ export function AdBanner({ className = '', format = 'banner' }: AdBannerProps) {
         title="Advertisement"
         src={adSource}
         className="w-full h-full relative z-10 border-0 bg-transparent"
-        sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+        
         scrolling="no"
       />
     </div>

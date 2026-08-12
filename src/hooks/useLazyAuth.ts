@@ -16,6 +16,40 @@ import {
 } from 'firebase/auth';
 import { auth } from '../config/firebase';
 
+const saveUserToFirestore = async (userObj: User) => {
+  try {
+    const { doc, setDoc } = await import('firebase/firestore');
+    const { db } = await import('../config/firebase');
+
+    let fcmToken = null;
+    if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.getFcmToken === 'function') {
+      try {
+        fcmToken = (window as any).AndroidLauncher.getFcmToken();
+      } catch (e) {
+        console.error("Error getting FCM token:", e);
+      }
+    }
+
+    const payload: any = {
+      uid: userObj.uid,
+      email: userObj.email || null,
+      displayName: userObj.displayName || null,
+      photoURL: userObj.photoURL || null,
+      isAnonymous: userObj.isAnonymous,
+      createdAt: userObj.metadata.creationTime ? new Date(userObj.metadata.creationTime).toISOString() : new Date().toISOString(),
+      lastLoginAt: new Date().toISOString()
+    };
+
+    if (fcmToken && !userObj.isAnonymous) {
+      payload.fcmToken = fcmToken;
+    }
+
+    await setDoc(doc(db, 'users', userObj.uid), payload, { merge: true });
+  } catch (err) {
+    console.error("Failed to record user in Firestore:", err);
+  }
+};
+
 export function useLazyAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,22 +69,7 @@ export function useLazyAuth() {
       
       // Update user in Firestore
       if (currentUser && !currentUser.isAnonymous) {
-        try {
-          const { doc, setDoc } = await import('firebase/firestore');
-          const { db } = await import('../config/firebase');
-          
-          await setDoc(doc(db, 'users', currentUser.uid), {
-            uid: currentUser.uid,
-            email: currentUser.email || null,
-            displayName: currentUser.displayName || null,
-            photoURL: currentUser.photoURL || null,
-            isAnonymous: currentUser.isAnonymous,
-            createdAt: currentUser.metadata.creationTime ? new Date(currentUser.metadata.creationTime).toISOString() : new Date().toISOString(),
-            lastLoginAt: new Date().toISOString()
-          }, { merge: true });
-        } catch (err) {
-          console.error("Failed to record user in Firestore:", err);
-        }
+        await saveUserToFirestore(currentUser);
       }
     });
 
@@ -100,21 +119,7 @@ export function useLazyAuth() {
       const result = await linkWithPopup(auth.currentUser, provider);
       setUser(result.user);
       
-      try {
-        const { doc, setDoc } = await import('firebase/firestore');
-        const { db } = await import('../config/firebase');
-        await setDoc(doc(db, 'users', result.user.uid), {
-          uid: result.user.uid,
-          email: result.user.email || null,
-          displayName: result.user.displayName || null,
-          photoURL: result.user.photoURL || null,
-          isAnonymous: result.user.isAnonymous,
-          createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
-          lastLoginAt: new Date().toISOString()
-        }, { merge: true });
-      } catch (err) {
-        console.error("Failed to record user in Firestore after Google link:", err);
-      }
+      await saveUserToFirestore(result.user);
       
       return result.user;
     } catch (err: any) {
@@ -134,21 +139,7 @@ export function useLazyAuth() {
       await sendEmailVerification(result.user);
       setUser(result.user);
       
-      try {
-        const { doc, setDoc } = await import('firebase/firestore');
-        const { db } = await import('../config/firebase');
-        await setDoc(doc(db, 'users', result.user.uid), {
-          uid: result.user.uid,
-          email: result.user.email || null,
-          displayName: displayName || null,
-          photoURL: result.user.photoURL || null,
-          isAnonymous: result.user.isAnonymous,
-          createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
-          lastLoginAt: new Date().toISOString()
-        }, { merge: true });
-      } catch (err) {
-        console.error("Failed to record user in Firestore during registration:", err);
-      }
+      await saveUserToFirestore(result.user);
       
       return { user: result.user, needsVerification: true };
     } catch (err) {
@@ -162,21 +153,7 @@ export function useLazyAuth() {
       setUser(result.user);
       
       if (!result.user.isAnonymous) {
-        try {
-          const { doc, setDoc } = await import('firebase/firestore');
-          const { db } = await import('../config/firebase');
-          await setDoc(doc(db, 'users', result.user.uid), {
-            uid: result.user.uid,
-            email: result.user.email || null,
-            displayName: result.user.displayName || null,
-            photoURL: result.user.photoURL || null,
-            isAnonymous: result.user.isAnonymous,
-            createdAt: result.user.metadata.creationTime ? new Date(result.user.metadata.creationTime).toISOString() : new Date().toISOString(),
-            lastLoginAt: new Date().toISOString()
-          }, { merge: true });
-        } catch (err) {
-          console.error("Failed to update user in Firestore during login:", err);
-        }
+        await saveUserToFirestore(result.user);
       }
       
       return { user: result.user, needsVerification: !result.user.emailVerified };

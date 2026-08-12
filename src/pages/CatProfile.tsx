@@ -37,6 +37,37 @@ export default function CatProfile() {
   const [cat, setCat] = useState<CatRecord | null>(location.state?.cat || null);
   const [showInterstitial, setShowInterstitial] = useState(false);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.showInterstitialAd === 'function') {
+      const lastAdTime = sessionStorage.getItem('lastNativeAdTime');
+      const now = Date.now();
+      if (!lastAdTime || now - parseInt(lastAdTime) > 30000) {
+        (window as any).AndroidLauncher.showInterstitialAd();
+        sessionStorage.setItem('lastNativeAdTime', now.toString());
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!cat && id) {
+      let isMounted = true;
+      const fetchCat = async () => {
+        try {
+          const { doc, getDoc } = await import("firebase/firestore");
+          const { db } = await import("../config/firebase");
+          const snap = await getDoc(doc(db, "strays", id));
+          if (snap.exists() && isMounted) {
+            setCat({ id: snap.id, ...snap.data() } as CatRecord);
+          }
+        } catch (err) {
+          console.error("Failed to fetch cat profile:", err);
+        }
+      };
+      fetchCat();
+      return () => { isMounted = false; };
+    }
+  }, [cat, id]);
+
   const [isFavorite, setIsFavorite] = useState(() => {
     const profileStr = localStorage.getItem("user_profile");
     if (profileStr) {
