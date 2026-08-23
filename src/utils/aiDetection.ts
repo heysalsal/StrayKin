@@ -26,9 +26,10 @@ export const preloadAiModel = async () => {
   try {
     cachedModel = await modelPromise;
     console.log("Model preloaded successfully.");
-    processAiQueue();
   } catch (error) {
     console.error("Failed to preload model:", error);
+  } finally {
+    processAiQueue();
   }
 };
 
@@ -40,9 +41,9 @@ export const processAiQueue = async () => {
     console.log(`Processing ${pending.length} pending submissions...`);
     for (const sub of pending) {
       console.log(`AI checking pending submission ${sub.id}`);
-      const { isValid, message } = await checkIsAnimal(sub.imageSrc);
+      const { isValid, message, error } = await checkIsAnimal(sub.imageSrc);
       
-      if (isValid) {
+      if (isValid || error) {
         // Submit to backend
         try {
           const res = await fetch("/api/submit-for-review", {
@@ -50,6 +51,7 @@ export const processAiQueue = async () => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(sub.reqBody),
           });
+          if (!res.ok) throw new Error("Server returned " + res.status);
           const data = await res.json();
           
           if (sub.reqBody.details?.catId) {
@@ -61,9 +63,19 @@ export const processAiQueue = async () => {
                addToGallery: sub.reqBody.details.addToGallery,
                ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
             });
+            
+            // Also update check_in document if applicable
+            if (sub.reqBody.details?.checkInId) {
+              await updateDoc(doc(db, "check_ins", sub.reqBody.details.checkInId), { 
+                 status: data.status,
+                 ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+              }).catch(() => {});
+            }
           }
+          await removePendingSubmission(sub.id);
         } catch (e) {
-          console.error("Failed to submit pending request", e);
+          console.error("Failed to submit pending request, will retry later", e);
+          continue; // Skip removal, retry later
         }
       } else {
         // Not an animal
@@ -84,16 +96,15 @@ export const processAiQueue = async () => {
            // Not ideal for background but okay for PWA if they are still on page
            alert("Your recent submission was rejected: " + message);
         }
+        await removePendingSubmission(sub.id);
       }
-      
-      await removePendingSubmission(sub.id);
     }
   } catch (e) {
     console.error("Error processing AI queue", e);
   }
 };
 
-export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean, message: string}> => {
+export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean, message: string, error?: boolean}> => {
   try {
     const img = new Image();
     await new Promise((resolve, reject) => {
@@ -121,17 +132,12 @@ export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean
     }
     
     console.log("Detecting objects...");
-    const predictions = await cachedModel.detect(img);
+    const predictions = await cachedModel.detect(img, 20, 0.3); // Lower threshold to 0.3 to detect animals even if partially obscured
     console.log("Predictions:", predictions);
     
     const animalClasses = ['cat', 'dog', 'bird', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe'];
     
     const hasAnimal = predictions.some(p => animalClasses.includes(p.class));
-    const hasPerson = predictions.some(p => p.class === 'person');
-
-    if (hasPerson) {
-      return { isValid: false, message: 'Human detected in the photo. Please take a photo of the stray animal only.' };
-    }
     
     if (!hasAnimal) {
       return { isValid: false, message: `No animal detected in the photo. (Found: ${predictions.map(p => p.class).join(', ') || 'nothing'}) Please try again.` };
@@ -140,6 +146,6 @@ export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean
     return { isValid: true, message: 'Animal detected successfully!' };
   } catch (error) {
     console.error("AI Detection failed:", error);
-    return { isValid: false, message: 'AI model failed to load or process the image. Please wait for the download to finish or check your connection.' };
+    return { isValid: false, message: 'AI model failed to load or process the image. Please wait for the download to finish or check your connection.', error: true };
   }
 };

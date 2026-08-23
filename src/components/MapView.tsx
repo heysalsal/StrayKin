@@ -310,9 +310,9 @@ export default function MapView() {
 
         if (useAiDetection && isModelReady()) {
           setIsDetecting(true);
-          const { isValid, message } = await checkIsAnimal(finalImageSrc);
+          const { isValid, message, error } = await checkIsAnimal(finalImageSrc);
           setIsDetecting(false);
-          if (!isValid) {
+          if (!isValid && !error) {
             setAiWarning(message);
             return; // Stop submission
           }
@@ -621,9 +621,9 @@ export default function MapView() {
 
           if (useAiDetection && isModelReady()) {
             setIsDetecting(true);
-            const { isValid, message } = await checkIsAnimal(finalImageSrc);
+            const { isValid, message, error } = await checkIsAnimal(finalImageSrc);
             setIsDetecting(false);
-            if (!isValid) {
+            if (!isValid && !error) {
               setAiWarning(message);
               return; // Stop submission
             }
@@ -664,6 +664,7 @@ export default function MapView() {
   };
 
   const confirmSighting = async () => {
+    if (isSubmitting) return;
     if (!sightingPos) return;
 
     if (!photoDataUrl) {
@@ -891,8 +892,16 @@ export default function MapView() {
         // or we just want to be absolutely sure.
         console.log("Model is ready, performing final AI check before submission...");
         const finalImageSrc = photoDataUrl || reqBody.imageBase64;
-        checkIsAnimal(finalImageSrc).then(({ isValid, message }) => {
-            if (!isValid) {
+        checkIsAnimal(finalImageSrc).then(({ isValid, message, error }) => {
+            if (error) {
+               console.warn("AI check threw an error, queuing it instead");
+               addPendingSubmission({
+                 id: submissionId,
+                 imageSrc: photoDataUrl || reqBody.imageBase64,
+                 reqBody: { ...reqBody, docIdForReview },
+                 timestamp: Date.now()
+               });
+            } else if (!isValid) {
                 console.warn("Final AI check failed:", message);
                 // Delete the temporary Firestore document if rejected
                 import('firebase/firestore').then(({ deleteDoc, doc }) => {
@@ -915,7 +924,10 @@ export default function MapView() {
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ ...reqBody, docIdForReview }),
                 })
-                .then(res => res.json())
+                .then(async res => {
+                  if (!res.ok) throw new Error("Server error");
+                  return res.json();
+                })
                 .then(data => {
                   if (reqBody.details.catId) {
                     updateCatSighting(reqBody.details.catId, { 
@@ -924,9 +936,28 @@ export default function MapView() {
                       addToGallery: reqBody.details.addToGallery,
                       ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
                     });
+                    
+                    if ((reqBody.details as any).checkInId) {
+                      import('firebase/firestore').then(({ updateDoc, doc }) => {
+                        import('../config/firebase').then(({ db }) => {
+                          updateDoc(doc(db, "check_ins", (reqBody.details as any).checkInId), { 
+                             status: data.status,
+                             ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+                          }).catch(() => {});
+                        });
+                      });
+                    }
                   }
                 })
-                .catch(err => console.error("Background review failed", err));
+                .catch(err => {
+                   console.error("Background review failed, adding to queue", err);
+                   addPendingSubmission({
+                     id: submissionId,
+                     imageSrc: photoDataUrl || reqBody.imageBase64,
+                     reqBody: { ...reqBody, docIdForReview },
+                     timestamp: Date.now()
+                   });
+                });
             }
         });
       } else {
@@ -935,7 +966,10 @@ export default function MapView() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...reqBody, docIdForReview }),
         })
-        .then(res => res.json())
+        .then(async res => {
+          if (!res.ok) throw new Error("Server error");
+          return res.json();
+        })
         .then(data => {
           if (reqBody.details.catId) {
             updateCatSighting(reqBody.details.catId, { 
@@ -944,9 +978,28 @@ export default function MapView() {
               addToGallery: reqBody.details.addToGallery,
               ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
             });
+            
+            if ((reqBody.details as any).checkInId) {
+              import('firebase/firestore').then(({ updateDoc, doc }) => {
+                import('../config/firebase').then(({ db }) => {
+                  updateDoc(doc(db, "check_ins", (reqBody.details as any).checkInId), { 
+                     status: data.status,
+                     ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+                  }).catch(() => {});
+                });
+              });
+            }
           }
         })
-        .catch(err => console.error("Background review failed", err));
+        .catch(err => {
+           console.error("Background review failed, adding to queue", err);
+           addPendingSubmission({
+             id: submissionId,
+             imageSrc: photoDataUrl || reqBody.imageBase64,
+             reqBody: { ...reqBody, docIdForReview },
+             timestamp: Date.now()
+           });
+        });
       }
       
       processGamificationRewards(docIdForReview);

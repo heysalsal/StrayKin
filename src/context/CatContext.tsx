@@ -310,7 +310,17 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
           notes: details.notes || null,
         },
       };
-      await setDoc(docRef, newCatData);
+      try {
+        await setDoc(docRef, newCatData);
+      } catch (e: any) {
+        if (newCatData.imageUrl) {
+          console.warn("Failed to save with image, trying without image:", e);
+          newCatData.imageUrl = null;
+          await setDoc(docRef, newCatData);
+        } else {
+          throw e;
+        }
+      }
 
       return { status: "created", id: docRef.id };
     } catch (e) {
@@ -330,7 +340,7 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         console.warn("Could not fetch global settings, autoApprove defaulting to false.");
       }
       const docRef = doc(collection(db, "check_ins"));
-      await setDoc(docRef, {
+      const newLogData = {
         catId: details.catId,
         wasFed: details.wasFed || false,
         healthStatus: details.healthStatus || "Good",
@@ -341,7 +351,19 @@ export function CatProvider({ children }: { children: React.ReactNode }) {
         submissionId: details.submissionId || null,
         submittedBy: details.submittedBy || null,
         timestamp: serverTimestamp(),
-      });
+      };
+      
+      try {
+        await setDoc(docRef, newLogData);
+      } catch (e: any) {
+        if (newLogData.photoDataUrl) {
+           console.warn("Failed to save check-in with image, trying without image:", e);
+           newLogData.photoDataUrl = null;
+           await setDoc(docRef, newLogData);
+        } else {
+           throw e;
+        }
+      }
       return { status: "created", id: docRef.id };
     } catch (e) {
       console.error("Failed to add check-in log", e);

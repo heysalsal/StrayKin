@@ -4,7 +4,8 @@ import { createServer as createViteServer } from "vite";
 import fs from "fs";
 import TelegramBot from "node-telegram-bot-api";
 import { initializeApp } from "firebase/app";
-import admin from "firebase-admin";
+import { getApps, initializeApp as adminInitializeApp } from "firebase-admin/app";
+import { getMessaging } from "firebase-admin/messaging";
 import { getFirestore, doc, updateDoc, getDoc, collection, query as fsQuery, where, getDocs, setDoc } from "firebase/firestore";
 
 const app = express();
@@ -14,8 +15,8 @@ app.use(express.json({ limit: "50mb" }));
 
 
 try {
-  if (admin.apps.length === 0) {
-    admin.initializeApp({
+  if (getApps().length === 0) {
+    adminInitializeApp({
       projectId: "ai-studio-a8824e8c-cfd8-459c-ba28-c6aad4888a4d"
     });
   }
@@ -409,7 +410,8 @@ app.post("/api/submit-for-review", async (req, res) => {
       const catIdStr = details?.catId ? `\nCat ID: ${details.catId}` : "";
       const urlStr = uploadedUrl ? `\nFile URL: ${uploadedUrl}` : "";
       const isApproved = autoApprove;
-      const message = `${isApproved ? "Auto-Approved " : "New "}${type === "check_in" ? "Check-in" : (type === "hub_proposal" ? "Hub Proposal" : "Straykin")} Submission! 🐱\nSubmission ID: ${id}${catIdStr}${urlStr}\nDetails: ${JSON.stringify(details, null, 2)}`;
+      let message = `${isApproved ? "Auto-Approved " : "New "}${type === "check_in" ? "Check-in" : (type === "hub_proposal" ? "Hub Proposal" : "Straykin")} Submission! 🐱\nSubmission ID: ${id}${catIdStr}${urlStr}\nDetails: ${JSON.stringify(details, null, 2)}`;
+      if (message.length > 1000) message = message.substring(0, 1000) + "...";
 
       const keyboard = isApproved ? [] : [
           [
@@ -433,6 +435,9 @@ app.post("/api/submit-for-review", async (req, res) => {
           await bot.sendPhoto(chatId, buffer, {
             caption: message,
             reply_markup: { inline_keyboard: keyboard },
+          }, {
+            filename: 'submission.jpg',
+            contentType: 'image/jpeg'
           });
         }
       } else {
@@ -537,7 +542,7 @@ app.post("/api/location", async (req, res) => {
         token: fcmToken
       };
 
-      await admin.messaging().send(message);
+      await getMessaging().send(message);
       console.log(`Notification sent to ${fcmToken}`);
       return res.json({ success: true, message: "Notification sent", straysFound });
     } else {
