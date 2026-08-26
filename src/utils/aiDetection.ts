@@ -57,19 +57,28 @@ export const processAiQueue = async () => {
           if (sub.reqBody.details?.catId) {
             const { updateDoc, doc } = await import('firebase/firestore');
             const { db } = await import('../config/firebase');
-            await updateDoc(doc(db, "strays", sub.reqBody.details.catId), { 
-               status: data.status,
-               isCheckIn: sub.reqBody.type === "check_in",
-               addToGallery: sub.reqBody.details.addToGallery,
-               ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
-            });
-            
-            // Also update check_in document if applicable
-            if (sub.reqBody.details?.checkInId) {
-              await updateDoc(doc(db, "check_ins", sub.reqBody.details.checkInId), { 
-                 status: data.status,
-                 ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
-              }).catch(() => {});
+            try {
+              const payload: any = {
+                status: data.status,
+                isCheckIn: sub.reqBody.type === "check_in"
+              };
+              if (sub.reqBody.details.addToGallery !== undefined) {
+                payload.addToGallery = sub.reqBody.details.addToGallery;
+              }
+              if (data.imageUrl) {
+                payload.photoDataUrl = data.imageUrl;
+              }
+              await updateDoc(doc(db, "strays", sub.reqBody.details.catId), payload);
+              
+              // Also update check_in document if applicable
+              if (sub.reqBody.details?.checkInId) {
+                await updateDoc(doc(db, "check_ins", sub.reqBody.details.checkInId), { 
+                   status: data.status,
+                   ...(data.imageUrl ? { photoDataUrl: data.imageUrl } : {})
+                }).catch(() => {});
+              }
+            } catch (err) {
+              console.warn("Failed to update local cache document, but server succeeded.", err);
             }
           }
           await removePendingSubmission(sub.id);
