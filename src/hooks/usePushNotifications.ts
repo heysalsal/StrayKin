@@ -8,19 +8,49 @@ import { db } from '../config/firebase';
 export function usePushNotifications() {
   const { user } = useLazyAuth();
   const [token, setToken] = useState<string | null>(null);
-  const [permission, setPermission] = useState(Notification.permission);
+  const [permission, setPermission] = useState<NotificationPermission>(Notification.permission);
 
   const requestPermission = async () => {
     try {
+      if (typeof window !== 'undefined' && (window as any).AndroidLauncher && typeof (window as any).AndroidLauncher.requestNotificationPermission === 'function') {
+        (window as any).AndroidLauncher.requestNotificationPermission();
+        
+        let attempts = 0;
+        const pollInterval = setInterval(async () => {
+          attempts++;
+          const nativeToken = (window as any).AndroidLauncher.getFcmToken();
+          if (nativeToken && nativeToken.trim() !== "") {
+            clearInterval(pollInterval);
+            setToken(nativeToken);
+            setPermission('granted');
+            
+            if (user && !user.isAnonymous) {
+              const userRef = doc(db, "users", user.uid);
+              try {
+                await updateDoc(userRef, {
+                  fcmTokens: arrayUnion(nativeToken)
+                });
+              } catch (e) {
+                 console.warn("Could not save native FCM token to user", e);
+              }
+            }
+          } else if (attempts >= 5) {
+            clearInterval(pollInterval);
+            console.warn("Could not get native FCM token after 10 seconds");
+          }
+        }, 2000);
+        
+        return;
+      }
+
       const p = await Notification.requestPermission();
       setPermission(p);
-
       if (p === 'granted') {
         const messaging = await getMessagingToken();
         if (messaging) {
-          const currentToken = await getToken(messaging, { 
-             // vapidKey is optional but recommended if set up in Firebase console, 
-             // without it firebase creates a default.
+          const currentToken = await getToken(messaging, {
+              // vapidKey is optional but recommended if set up in Firebase console,
+              // without it firebase creates a default.
           });
           
           if (currentToken) {

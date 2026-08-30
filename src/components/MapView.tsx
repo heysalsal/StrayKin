@@ -1208,7 +1208,7 @@ export default function MapView() {
         {/* Toggle Button */}
         <button
           onClick={() => setShowMapFilters(!showMapFilters)}
-          className={`bg-white p-3 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border transition-all active:scale-95 z-10 relative ${showMapFilters ? 'border-indigo-600 text-indigo-600 bg-indigo-50' : 'border-slate-100 text-slate-800 hover:bg-slate-50'}`}
+          className={`bg-white p-3 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] border transition-all active:scale-95 z-10 relative ${showMapFilters ? 'border-indigo-600 text-indigo-600 bg-indigo-50' : 'border-slate-100 text-slate-800 md:hover:bg-slate-50'}`}
         >
           <Filter className="w-5 h-5" />
         </button>
@@ -1237,7 +1237,7 @@ export default function MapView() {
                     key={filter.key}
                     onClick={() => setMapFilters(p => ({ ...p, [filter.key]: !p[filter.key as keyof typeof mapFilters] }))}
                     className={`p-2.5 rounded-full shadow-[0_4px_12px_rgb(0,0,0,0.08)] border-2 transition-all duration-200 flex items-center justify-center bg-white
-                      ${isActive ? filter.activeColor : 'text-slate-400 border-transparent hover:text-slate-600 hover:bg-slate-50'}
+                      ${isActive ? filter.activeColor : 'text-slate-400 border-transparent md:hover:text-slate-600 md:hover:bg-slate-50'}
                     `}
                     title={filter.label}
                   >
@@ -1286,10 +1286,10 @@ export default function MapView() {
                 setIsMenuOpen(false);
                 navigate("/account");
               }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 md:hover:bg-slate-50 transition-all active:scale-95 group"
             >
               <span className="font-bold text-sm tracking-wide">Account</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 md:group-hover:bg-slate-200 transition-colors">
                 <CustomIcon
                   src="/icon-account.png"
                   FallbackIcon={User}
@@ -1302,10 +1302,10 @@ export default function MapView() {
                 setIsMenuOpen(false);
                 navigate("/cats");
               }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 md:hover:bg-slate-50 transition-all active:scale-95 group"
             >
               <span className="font-bold text-sm tracking-wide">Nearby</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 md:group-hover:bg-slate-200 transition-colors">
                 <CustomIcon
                   src="/icon-cats.png"
                   FallbackIcon={List}
@@ -1344,10 +1344,10 @@ export default function MapView() {
                   setRecenterCounter((c) => c + 1);
                 }
               }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 md:hover:bg-slate-50 transition-all active:scale-95 group"
             >
               <span className="font-bold text-sm tracking-wide">Recenter</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 md:group-hover:bg-slate-200 transition-colors">
                 <CustomIcon
                   src="/icon-recenter.png"
                   FallbackIcon={MapPin}
@@ -1366,10 +1366,10 @@ export default function MapView() {
                   navigate('/community');
                 }
               }}
-              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 hover:bg-slate-50 transition-all active:scale-95 group"
+              className="flex items-center gap-3 bg-white text-slate-800 px-5 py-3.5 rounded-[2rem] shadow-xl border border-slate-100 md:hover:bg-slate-50 transition-all active:scale-95 group"
             >
               <span className="font-bold text-sm tracking-wide">Community</span>
-              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-slate-200 transition-colors">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 md:group-hover:bg-slate-200 transition-colors">
                 <MapPin className="w-4 h-4" />
               </div>
             </button>
@@ -1378,12 +1378,12 @@ export default function MapView() {
                 setIsMenuOpen(false);
                 handleLogSightingClick();
               }}
-              className="flex items-center gap-3 bg-orange-500 text-white px-5 py-3.5 rounded-[2rem] shadow-xl shadow-orange-200 border border-transparent hover:bg-orange-600 transition-all active:scale-95 group"
+              className="flex items-center gap-3 bg-orange-500 text-white px-5 py-3.5 rounded-[2rem] shadow-xl shadow-orange-200 border border-transparent md:hover:bg-orange-600 transition-all active:scale-95 group"
             >
               <span className="font-bold text-sm tracking-wide">
                 Find Stray
               </span>
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center group-hover:bg-white/30 transition-colors overflow-hidden">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center md:group-hover:bg-white/30 transition-colors overflow-hidden">
                 <CustomIcon
                   src="/icon-find.png"
                   FallbackIcon={Plus}
@@ -1543,7 +1543,7 @@ export default function MapView() {
                   </div>
                   <button
                     onClick={handleCloseModal}
-                    className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+                    className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 md:hover:bg-slate-200 transition-colors shrink-0"
                   >
                     <X className="w-6 h-6" />
                   </button>
@@ -1564,7 +1564,7 @@ export default function MapView() {
                 </div>
                 <button
                   onClick={() => setModalStep("camera")}
-                  className="w-full py-4 rounded-2xl font-black transition-all flex items-center justify-center gap-2 bg-orange-500 text-white shadow-lg shadow-orange-200 hover:bg-orange-600 active:scale-[0.98]"
+                  className="w-full py-4 rounded-2xl font-black transition-all flex items-center justify-center gap-2 bg-orange-500 text-white shadow-lg shadow-orange-200 md:hover:bg-orange-600 active:scale-[0.98]"
                 >
                   <Plus className="w-5 h-5" />
                   Open Camera
@@ -1585,7 +1585,7 @@ export default function MapView() {
                     </div>
                     <button
                       onClick={handleCloseModal}
-                      className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+                      className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 md:hover:bg-slate-200 transition-colors shrink-0"
                     >
                       <X className="w-5 h-5" />
                     </button>
@@ -1643,7 +1643,7 @@ export default function MapView() {
                                   onPointerDown={(e) => { e.preventDefault(); setComparingPhotoId(item.data?.id || null); }}
                                   onPointerUp={(e) => { e.preventDefault(); setComparingPhotoId(null); }}
                                   onPointerLeave={(e) => { e.preventDefault(); setComparingPhotoId(null); }}
-                                  className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md text-white shadow-lg border border-white/20 hover:bg-black/80 transition-colors flex items-center justify-center select-none active:scale-95"
+                                  className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md text-white shadow-lg border border-white/20 md:hover:bg-black/80 transition-colors flex items-center justify-center select-none active:scale-95"
                                 >
                                   <ArrowLeftRight className="w-6 h-6 pointer-events-none" />
                                 </button>
@@ -1668,7 +1668,7 @@ export default function MapView() {
                               setSelectedCatId(item.data?.id || null);
                               setModalStep("form");
                             }}
-                            className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors"
+                            className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 md:hover:bg-orange-600 transition-colors"
                           >
                             Yep, this is them!
                           </button>
@@ -1735,7 +1735,7 @@ export default function MapView() {
                                   onPointerDown={(e) => { e.preventDefault(); setComparingPhotoId(displayItems[currentIdx].data?.id || null); }}
                                   onPointerUp={(e) => { e.preventDefault(); setComparingPhotoId(null); }}
                                   onPointerLeave={(e) => { e.preventDefault(); setComparingPhotoId(null); }}
-                                  className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md text-white shadow-lg border border-white/20 hover:bg-black/80 transition-colors flex items-center justify-center select-none active:scale-95"
+                                  className="w-12 h-12 rounded-full bg-black/60 backdrop-blur-md text-white shadow-lg border border-white/20 md:hover:bg-black/80 transition-colors flex items-center justify-center select-none active:scale-95"
                                 >
                                   <ArrowLeftRight className="w-6 h-6 pointer-events-none" />
                                 </button>
@@ -1767,7 +1767,7 @@ export default function MapView() {
                             setSelectedCatId(displayItems[currentIdx].data?.id || null);
                             setModalStep("form");
                           }}
-                          className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 hover:bg-orange-600 transition-colors"
+                          className="w-full py-4 rounded-2xl bg-orange-500 text-white font-bold shadow-lg shadow-orange-200 md:hover:bg-orange-600 transition-colors"
                         >
                           Yep, this is them!
                         </button>
@@ -1795,7 +1795,7 @@ export default function MapView() {
                         setSelectedCatId(null);
                         setModalStep("form");
                       }}
-                      className={`w-full py-4 rounded-2xl font-bold transition-colors flex items-center justify-center gap-2 ${displayItems.length > 0 && currentIdx < displayItems.length ? "border border-slate-200 text-slate-600 hover:bg-slate-50" : "bg-orange-500 text-white shadow-lg shadow-orange-200 hover:bg-orange-600"}`}
+                      className={`w-full py-4 rounded-2xl font-bold transition-colors flex items-center justify-center gap-2 ${displayItems.length > 0 && currentIdx < displayItems.length ? "border border-slate-200 text-slate-600 md:hover:bg-slate-50" : "bg-orange-500 text-white shadow-lg shadow-orange-200 md:hover:bg-orange-600"}`}
                     >
                       <Plus className="w-5 h-5" />
                       Report New Straykin
@@ -1817,7 +1817,7 @@ export default function MapView() {
                     </div>
                     <button
                       onClick={handleCloseModal}
-                      className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 hover:bg-slate-200 transition-colors shrink-0"
+                      className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 md:hover:bg-slate-200 transition-colors shrink-0"
                     >
                       <X className="w-6 h-6" />
                     </button>
@@ -1882,7 +1882,7 @@ export default function MapView() {
                       ) : (
                         <button
                           onClick={() => setModalStep("camera")}
-                          className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-500 hover:text-orange-500 hover:bg-slate-50 transition-colors relative z-10"
+                          className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-500 md:hover:text-orange-500 md:hover:bg-slate-50 transition-colors relative z-10"
                         >
                           <div className="w-10 h-10 rounded-full bg-white shadow-sm flex items-center justify-center">
                             <Plus className="w-5 h-5" />
@@ -2078,7 +2078,7 @@ export default function MapView() {
                                         : [...prev, act],
                                     )
                                   }
-                                  className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-colors ${activities.includes(act) ? "bg-orange-500 text-white border-orange-500 shadow-md shadow-orange-200" : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"}`}
+                                  className={`px-4 py-2.5 rounded-xl text-sm font-bold border transition-colors ${activities.includes(act) ? "bg-orange-500 text-white border-orange-500 shadow-md shadow-orange-200" : "bg-white text-slate-600 border-slate-200 md:hover:bg-slate-50"}`}
                                 >
                                   {act}
                                 </button>
@@ -2101,7 +2101,7 @@ export default function MapView() {
                                     onClick={() =>
                                       setTags(tags.filter((t) => t !== tag))
                                     }
-                                    className="hover:text-red-500"
+                                    className="md:hover:text-red-500"
                                   >
                                     &times;
                                   </button>
@@ -2139,7 +2139,7 @@ export default function MapView() {
                     <button
                       onClick={confirmSighting}
                       disabled={isSubmitting}
-                      className={`w-full py-4 rounded-2xl flex items-center justify-center gap-2 ${isSubmitting ? "bg-orange-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600 active:scale-[0.98]"} text-white font-bold shadow-xl shadow-orange-200 transition-all`}
+                      className={`w-full py-4 rounded-2xl flex items-center justify-center gap-2 ${isSubmitting ? "bg-orange-400 cursor-not-allowed" : "bg-orange-500 md:hover:bg-orange-600 active:scale-[0.98]"} text-white font-bold shadow-xl shadow-orange-200 transition-all`}
                     >
                       {!isSubmitting && (
                         <CustomIcon
@@ -2186,7 +2186,7 @@ export default function MapView() {
                    topName: selectedCatId ? undefined : (nameInput || animalTypeInput || "Stray")
                 }});
               }}
-              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-600/30 hover:bg-indigo-700"
+              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-600/30 md:hover:bg-indigo-700"
             >
               Awesome!
             </button>
@@ -2213,7 +2213,7 @@ export default function MapView() {
           <div className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-[2rem] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl relative animate-in slide-in-from-bottom">
             <button
               onClick={() => setSelectedHub(null)}
-              className="absolute top-4 right-4 w-8 h-8 bg-black/40 text-white rounded-full flex items-center justify-center z-10 hover:bg-black/60 backdrop-blur-sm"
+              className="absolute top-4 right-4 w-8 h-8 bg-black/40 text-white rounded-full flex items-center justify-center z-10 md:hover:bg-black/60 backdrop-blur-sm"
             >
               <X className="w-5 h-5" />
             </button>
@@ -2242,7 +2242,7 @@ export default function MapView() {
                {selectedHub.socialMediaUrls && selectedHub.socialMediaUrls.length > 0 && (
                   <div className="mb-6 flex gap-2 overflow-x-auto pb-2">
                      {selectedHub.socialMediaUrls.map((url, i) => (
-                        <a key={i} href={url.startsWith('http') ? url : `https://${url}`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold whitespace-nowrap hover:bg-indigo-100">
+                        <a key={i} href={url.startsWith('http') ? url : `https://${url}`} target="_blank" rel="noopener noreferrer" className="flex-shrink-0 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-xs font-bold whitespace-nowrap md:hover:bg-indigo-100">
                           {url.replace(/^https?:\/\/(www\.)?/, '')}
                         </a>
                      ))}
@@ -2296,7 +2296,7 @@ export default function MapView() {
             <div className="flex gap-3">
               <button
                 onClick={() => setShowLoginModal(false)}
-                className="flex-1 py-3 px-4 rounded-xl bg-slate-800 text-white font-bold text-sm hover:bg-slate-700 transition-colors"
+                className="flex-1 py-3 px-4 rounded-xl bg-slate-800 text-white font-bold text-sm md:hover:bg-slate-700 transition-colors"
               >
                 Maybe later
               </button>
@@ -2305,7 +2305,7 @@ export default function MapView() {
                   setShowLoginModal(false);
                   navigate("/login");
                 }}
-                className="flex-1 py-3 px-4 rounded-xl bg-indigo-500 text-white font-bold text-sm hover:bg-indigo-600 transition-colors shadow-lg shadow-indigo-500/20"
+                className="flex-1 py-3 px-4 rounded-xl bg-indigo-500 text-white font-bold text-sm md:hover:bg-indigo-600 transition-colors shadow-lg shadow-indigo-500/20"
               >
                 Login
               </button>
