@@ -33,6 +33,7 @@ import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-lea
 import L from "leaflet";
 
 import { HubManager } from "../components/HubManager";
+import { triggerAppRating } from "../components/AppRatingModal";
 
 function MapController({ center }: { center: [number, number] }) {
   const map = useMap();
@@ -1501,6 +1502,15 @@ export default function AccountPage() {
               >
                 <span className="font-bold text-slate-700">
                   Suggestions / Feedback
+                </span>
+                <ExternalLink className="w-4 h-4 text-slate-400" />
+              </button>
+              <button
+                onClick={() => triggerAppRating(true)}
+                className="w-full flex items-center justify-between p-4 hover:bg-slate-50 rounded-xl transition-colors border-t border-slate-100"
+              >
+                <span className="font-bold text-slate-700">
+                  Rate Straykin
                 </span>
                 <ExternalLink className="w-4 h-4 text-slate-400" />
               </button>

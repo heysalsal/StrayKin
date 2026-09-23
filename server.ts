@@ -13,6 +13,18 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "50mb" }));
 
+// Application Version Tracking for Auto-Reload / Cache Busting
+let APP_VERSION = Date.now().toString();
+try {
+  const vPath = path.join(process.cwd(), "public", "version.json");
+  if (fs.existsSync(vPath)) {
+    const vData = JSON.parse(fs.readFileSync(vPath, "utf-8"));
+    if (vData.version) APP_VERSION = String(vData.version);
+  }
+} catch (e) {
+  console.warn("Failed to load version.json, using timestamp fallback", e);
+}
+
 
 try {
   if (getApps().length === 0) {
@@ -389,11 +401,57 @@ app.post("/api/submit-for-review", async (req, res) => {
   }
 
   const autoApprove = process.env.AUTO_APPROVE_SUBMISSIONS !== "false" && type !== "hub_proposal";
+  
+  // OpenStreetMap (Nominatim) Reverse Geocoding for Resident Detection
+  let isResidentArea = false;
+  let geocodeDebug = "";
+  
+  if (autoApprove && details?.lat && details?.lng) {
+      try {
+          console.log(`[Review] Reverse geocoding ${details.lat}, ${details.lng} via Nominatim...`);
+          // Using a custom user-agent as required by Nominatim ToS
+          const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?lat=${details.lat}&lon=${details.lng}&format=jsonv2&zoom=18`;
+          const geocodeRes = await fetch(nominatimUrl, {
+              headers: {
+                  "User-Agent": "StraykinApp/1.0 (Contact: admin@straykin.com)"
+              }
+          });
+          
+          if (geocodeRes.ok) {
+              const geoData = await geocodeRes.json();
+              geocodeDebug = geoData.type || geoData.addresstype || "unknown";
+              console.log(`[Review] Nominatim returned type: ${geocodeDebug}`);
+              
+              // Define what OSM types constitute a residential/private area
+              const residentialTypes = [
+                  "residential", "house", "apartments", "detached", 
+                  "terrace", "farm", "allotments", "garages",
+                  "village_green", "neighbourhood", "suburb", "hamlet"
+              ];
+              
+              if (residentialTypes.includes(geocodeDebug)) {
+                  isResidentArea = true;
+                  console.log(`[Review] Location flagged as RESIDENTIAL area.`);
+              } else {
+                  console.log(`[Review] Location flagged as PUBLIC area.`);
+              }
+          } else {
+              console.warn(`[Review] Nominatim API failed: ${geocodeRes.status}`);
+          }
+      } catch (err) {
+          console.error(`[Review] Geocoding error:`, err);
+      }
+  }
 
   // Always auto-approve the submission immediately directly via Firebase
   if (autoApprove && db) {
       console.log(`[Review] Auto-approving submission ${id}. with docIdForReview=${docIdForReview}`);
       try {
+        // If we determined it's residential, forcefully inject the flag into details
+        if (isResidentArea) {
+            details.isResident = true;
+            details.isResidentPet = true;
+        }
         await handleSubmissionApproval(db, id, "approve", uploadedUrl || imageBase64, docIdForReview, type, details);
         console.log(`[Review] Auto-approve complete for ${id}`);
       } catch (e) {
@@ -410,7 +468,8 @@ app.post("/api/submit-for-review", async (req, res) => {
       const catIdStr = details?.catId ? `\nCat ID: ${details.catId}` : "";
       const urlStr = uploadedUrl ? `\nFile URL: ${uploadedUrl}` : "";
       const isApproved = autoApprove;
-      let message = `${isApproved ? "Auto-Approved " : "New "}${type === "check_in" ? "Check-in" : (type === "hub_proposal" ? "Hub Proposal" : "Straykin")} Submission! 🐱\nSubmission ID: ${id}${catIdStr}${urlStr}\nDetails: ${JSON.stringify(details, null, 2)}`;
+      const residentWarning = isResidentArea ? `\n⚠️ FLAG: Auto-classified as RESIDENTIAL (Hidden on Map)` : "";
+      let message = `${isApproved ? "Auto-Approved " : "New "}${type === "check_in" ? "Check-in" : (type === "hub_proposal" ? "Hub Proposal" : "Straykin")} Submission! 🐱\nSubmission ID: ${id}${catIdStr}${urlStr}${residentWarning}\nDetails: ${JSON.stringify(details, null, 2)}`;
       if (message.length > 1000) message = message.substring(0, 1000) + "...";
 
       const keyboard = isApproved ? [] : [
@@ -452,7 +511,6 @@ app.post("/api/submit-for-review", async (req, res) => {
 
   res.json({ success: true, status: autoApprove ? "approved" : "under_review", imageUrl: uploadedUrl });
 });
-
 app.get("/api/submission-status/:id", async (req, res) => {
   res.setHeader(
     "Cache-Control",
@@ -477,6 +535,52 @@ app.get("/api/submission-status/:id", async (req, res) => {
   } catch(e) {}
   
   res.status(404).json({ error: "Not found" });
+});
+
+app.get("/api/version", (req, res) => {
+  res.setHeader(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
+  );
+  res.json({ version: APP_VERSION });
+});
+
+app.post("/api/app-feedback", async (req, res) => {
+  try {
+    const { rating, feedback, context, tags, platform, userEmail } = req.body;
+    if (!rating) {
+      return res.status(400).json({ error: "Missing rating" });
+    }
+
+    if (bot && chatId) {
+      const numRating = Math.max(1, Math.min(5, Math.round(Number(rating))));
+      const stars = "⭐".repeat(numRating);
+      const emptyStars = "☆".repeat(5 - numRating);
+      const fullStars = `${stars}${emptyStars} (${numRating}/5)`;
+
+      const header = numRating >= 4 
+        ? `🌟 New Positive App Rating! ${fullStars}`
+        : `⚠️ New App Issue / Feedback! ${fullStars}`;
+
+      const userStr = userEmail ? `\n👤 User: ${userEmail}` : "";
+      const platformStr = platform ? `\n📱 Platform: ${platform}` : "";
+      const tagsStr = tags && tags.length > 0 ? `\n🏷️ Tags: ${Array.isArray(tags) ? tags.join(", ") : tags}` : "";
+      const contextStr = context ? `\n💬 Reason / Problem:\n${context}` : "";
+      const feedbackStr = feedback ? `\n💡 Suggestion / Idea:\n${feedback}` : "";
+
+      const message = `${header}${userStr}${platformStr}${tagsStr}${contextStr}${feedbackStr}\n\n🕒 ${new Date().toLocaleString()}`;
+
+      await bot.sendMessage(chatId, message);
+    } else {
+      console.log("[Feedback Received without Telegram configured]:", req.body);
+    }
+
+    // Explicitly NO database write as requested by user
+    return res.json({ success: true, message: "Feedback sent via Telegram" });
+  } catch (err: any) {
+    console.error("Failed to process feedback:", err);
+    return res.status(500).json({ error: "Failed to send feedback" });
+  }
 });
 
 
@@ -504,7 +608,7 @@ app.post("/api/location", async (req, res) => {
   try {
     const { geohashQueryBounds, distanceBetween } = await import("geofire-common");
     const radiusInM = 1000; // 1km
-    const center = [latitude, longitude];
+    const center: [number, number] = [Number(latitude), Number(longitude)];
     const bounds = geohashQueryBounds(center, radiusInM);
 
     const promises = [];
@@ -524,7 +628,8 @@ app.post("/api/location", async (req, res) => {
       for (const doc of snap.docs) {
         const cat = doc.data();
         if (cat.lat && cat.lng) {
-          const distanceInKm = distanceBetween([cat.lat, cat.lng], center);
+          const catPoint: [number, number] = [Number(cat.lat), Number(cat.lng)];
+          const distanceInKm = distanceBetween(catPoint, center);
           const distanceInM = distanceInKm * 1000;
           if (distanceInM <= radiusInM) {
             straysFound++;
@@ -554,6 +659,68 @@ app.post("/api/location", async (req, res) => {
   }
 });
 
+app.get("/sitemap.xml", async (req, res) => {
+  try {
+    const baseUrl = "https://ais-pre-hqw42wpurvlsqt6rshlamo-454675957761.asia-southeast1.run.app";
+    let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${baseUrl}/</loc>
+    <changefreq>daily</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>${baseUrl}/community</loc>
+    <changefreq>daily</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>${baseUrl}/login</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+`;
+
+    if (db) {
+      // Dynamic Strays
+      try {
+        const snap = await getDocs(collection(db, "strays"));
+        snap.docs.forEach(doc => {
+          xml += `  <url>
+    <loc>${baseUrl}/cat/${doc.id}</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+`;
+        });
+      } catch (err) {
+        console.error("Error fetching strays for sitemap:", err);
+      }
+
+      // Dynamic Hubs
+      try {
+        const snap = await getDocs(collection(db, "hubs"));
+        snap.docs.forEach(doc => {
+          xml += `  <url>
+    <loc>${baseUrl}/hub/${doc.id}</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>
+`;
+        });
+      } catch (err) {
+        console.error("Error fetching hubs for sitemap:", err);
+      }
+    }
+
+    xml += `</urlset>`;
+    res.header("Content-Type", "application/xml");
+    res.send(xml);
+  } catch (error) {
+    console.error("Sitemap generation error:", error);
+    res.status(500).end();
+  }
+});
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

@@ -5,7 +5,7 @@ self.options = {
 self.lary = ""
 importScripts('https://5gvci.com/act/files/service-worker.min.js?r=sw')
 
-const CACHE_NAME = 'straykin-assets-cache-v3';
+const CACHE_NAME = 'straykin-assets-cache-v5';
 
 const AD_FILES = [
   '/',
@@ -31,6 +31,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
           if (cacheName !== CACHE_NAME && cacheName.startsWith('straykin-')) {
+            console.log('[SW] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
         })
@@ -40,31 +41,64 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
   const requestUrl = new URL(event.request.url);
-  
-  if (event.request.destination === 'document' && requestUrl.pathname.startsWith('/ad-')) {
-      event.respondWith(
-        caches.match(event.request).then((cachedResponse) => {
-             return cachedResponse || fetch(event.request);
-        })
-      );
-      return;
+
+  // Never intercept API routes or version.json to ensure real-time checks
+  if (requestUrl.pathname.startsWith('/api/') || requestUrl.pathname.includes('version.json')) {
+    return;
   }
 
-  // Cache JS, CSS or HTML files
-  if (event.request.destination === 'script' || event.request.destination === 'style' || event.request.destination === 'document') {
+  // Handle ad iframes
+  if (event.request.destination === 'document' && requestUrl.pathname.startsWith('/ad-')) {
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        return cachedResponse || fetch(event.request);
+      })
+    );
+    return;
+  }
+
+  // Navigation (HTML Document requests): Network-First, fallback to cached index.html for offline
+  if (event.request.mode === 'navigate' || event.request.destination === 'document') {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const copy = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+          }
+          return networkResponse;
+        })
+        .catch(() => {
+          // Offline fallback
+          return caches.match(event.request).then((cached) => cached || caches.match('/index.html'));
+        })
+    );
+    return;
+  }
+
+  // Cache JS & CSS files (stale-while-revalidate, but clean up 404s)
+  if (event.request.destination === 'script' || event.request.destination === 'style') {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
         if (cachedResponse) {
-          // Stale-while-revalidate for JS/CSS
-          fetch(event.request).then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-            }
-          }).catch(() => {});
+          fetch(event.request)
+            .then((networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+              }
+            })
+            .catch(() => {});
           return cachedResponse;
         }
+
         return fetch(event.request).then((networkResponse) => {
           if (!networkResponse || (networkResponse.status !== 200 && networkResponse.type !== 'opaque')) {
             return networkResponse;
@@ -74,57 +108,47 @@ self.addEventListener('fetch', (event) => {
             cache.put(event.request, responseToCache);
           });
           return networkResponse;
-        }).catch(() => {
-            // When offline and navigating, return index.html for SPA as a fallback
-            if (event.request.destination === 'document') {
-                return caches.match('/index.html');
-            }
         });
       })
     );
     return;
   }
 
-  // Cache map tiles, images
-  if (event.request.destination === 'image' || 
-      requestUrl.pathname.match(/\.(png|jpg|jpeg|gif|webp)$/i) ||
-      requestUrl.hostname.includes('firebasestorage.googleapis.com') ||
-      requestUrl.hostname.includes('bunnycdn.com') ||
-      requestUrl.hostname.includes('b-cdn.net') || 
-      requestUrl.hostname.includes('tile.openstreetmap.org')) {
-    
+  // Cache map tiles & images
+  if (
+    event.request.destination === 'image' || 
+    requestUrl.pathname.match(/\.(png|jpg|jpeg|gif|webp)$/i) ||
+    requestUrl.hostname.includes('firebasestorage.googleapis.com') ||
+    requestUrl.hostname.includes('bunnycdn.com') ||
+    requestUrl.hostname.includes('b-cdn.net') || 
+    requestUrl.hostname.includes('tile.openstreetmap.org')
+  ) {
     event.respondWith(
       caches.match(event.request).then((cachedResponse) => {
-        // If we have a cached version, return it
         if (cachedResponse) {
-          // Fetch and update occasionally
           if (!requestUrl.hostname.includes('tile.openstreetmap.org')) {
-            fetch(event.request).then((networkResponse) => {
-              if (networkResponse && networkResponse.status === 200) {
-                 caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-              }
-            }).catch(() => {});
+            fetch(event.request)
+              .then((networkResponse) => {
+                if (networkResponse && networkResponse.status === 200) {
+                  caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
+                }
+              })
+              .catch(() => {});
           }
           return cachedResponse;
         }
 
         return fetch(event.request).then((networkResponse) => {
-          // Check if we received a valid response
-          // We also cache opaque responses (status === 0), typical for cross-origin without CORS
           if (!networkResponse || (networkResponse.status !== 200 && networkResponse.type !== 'opaque')) {
             return networkResponse;
           }
-
-          // Clone the response because it's a stream and can only be consumed once
           const responseToCache = networkResponse.clone();
-
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
           });
-
           return networkResponse;
         }).catch(() => {
-           // Fetch failed (e.g. offline) and no cache found. 
+          // Fetch failed (offline) and no cache found
         });
       })
     );

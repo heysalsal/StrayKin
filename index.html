@@ -2,12 +2,67 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="description" content="Straykin is a community platform for tracking, feeding, and finding stray and lost cats. Help ensure no stray is left behind." />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="apple-touch-icon" href="/favicon.png" />
+    <script>
+      /**
+       * Auto-Reload & Cache Buster Handler
+       * Catches missing JS chunks after new deployments and forces a clean reload
+       * instead of leaving the user on a blank screen.
+       */
+      window.addEventListener('vite:preloadError', function(event) {
+        console.warn('[CacheBuster] Vite dynamic chunk failed to load. Purging cache and reloading...', event);
+        event.preventDefault();
+        try {
+          var lastReload = sessionStorage.getItem('straykin_preload_reload');
+          var now = Date.now();
+          if (!lastReload || (now - Number(lastReload)) > 8000) {
+            sessionStorage.setItem('straykin_preload_reload', String(now));
+            if ('caches' in window) {
+              caches.keys().then(function(names) {
+                return Promise.all(names.map(function(name) { return caches.delete(name); }));
+              }).finally(function() {
+                window.location.reload();
+              });
+            } else {
+              window.location.reload();
+            }
+          }
+        } catch(e) {
+          window.location.reload();
+        }
+      });
+
+      window.addEventListener('error', function(event) {
+        var msg = (event && event.message) ? String(event.message).toLowerCase() : '';
+        if (
+          msg.indexOf('failed to fetch dynamically imported module') !== -1 ||
+          msg.indexOf('loading chunk') !== -1 ||
+          msg.indexOf('error loading dynamically imported module') !== -1
+        ) {
+          var lastReload = sessionStorage.getItem('straykin_chunk_reload');
+          var now = Date.now();
+          if (!lastReload || (now - Number(lastReload)) > 8000) {
+            sessionStorage.setItem('straykin_chunk_reload', String(now));
+            console.warn('[CacheBuster] Caught fatal dynamic chunk load error. Reloading app...');
+            if ('caches' in window) {
+              caches.keys().then(function(names) {
+                return Promise.all(names.map(function(name) { return caches.delete(name); }));
+              }).finally(function() {
+                window.location.reload();
+              });
+            } else {
+              window.location.reload();
+            }
+          }
+        }
+      });
+    </script>
     <script>
       /**
        * Straykin PWA Environment & Monetization Handler

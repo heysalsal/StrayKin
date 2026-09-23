@@ -20,6 +20,8 @@ import CommunityPage from './pages/CommunityPage';
 import HubDetail from './pages/HubDetail';
 import UpdateLogPage from './pages/UpdateLogPage';
 import UpdateLogModal from './components/UpdateLogModal';
+import AppRatingModal from './components/AppRatingModal';
+import VersionChecker from './components/VersionChecker';
 import { CatProvider, useCatDatabase } from './context/CatContext';
 import { useLazyAuth } from './hooks/useLazyAuth';
 import { InstallPWA } from './components/InstallPWA';
@@ -84,6 +86,8 @@ function MainLayout() {
       {showSplash && <SplashScreen isReady={isReady} onComplete={() => setShowSplash(false)} />}
       <InstallPWA />
       <UpdateLogModal />
+      <VersionChecker />
+      <AppRatingModal />
       
       <main className="flex-1 relative flex overflow-hidden">
         <Routes>

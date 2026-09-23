@@ -4,6 +4,7 @@ import { ChevronLeft, Share as ShareIcon, Download, Dog, MapPin, Cat, User as Us
 import { toPng, toBlob } from 'html-to-image';
 import { useCatDatabase } from '../context/CatContext';
 import { auth, db } from '../config/firebase';
+import { triggerAppRating } from '../components/AppRatingModal';
 
 export default function SharePage() {
   const location = useLocation();
@@ -320,6 +321,7 @@ export default function SharePage() {
         <button 
           onClick={() => {
             if (state?.type === 'submission') {
+              triggerAppRating();
               if (state?.cat?.id) {
                 navigate(`/cat/${state.cat.id}`, { replace: true });
               } else {

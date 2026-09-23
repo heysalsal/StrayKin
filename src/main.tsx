@@ -52,11 +52,34 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js').then(
       (registration) => {
         console.log('ServiceWorker registration successful with scope: ', registration.scope);
+        // If an update is detected, tell installing worker to skip waiting immediately
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          if (newWorker) {
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                console.log('[SW] New version ready, taking control...');
+                newWorker.postMessage({ type: 'SKIP_WAITING' });
+              }
+            });
+          }
+        });
       },
       (err) => {
         console.log('ServiceWorker registration failed: ', err);
       }
     );
+  });
+
+  // When a new service worker version activates, trigger reload once to prevent chunk mismatches
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    const hasReloaded = sessionStorage.getItem('sw_controller_reloaded');
+    const now = Date.now();
+    if (!hasReloaded || now - Number(hasReloaded) > 15000) {
+      sessionStorage.setItem('sw_controller_reloaded', String(now));
+      console.log('[SW] Controller changed to new version. Refreshing page...');
+      window.location.reload();
+    }
   });
 }
 

@@ -821,6 +821,21 @@ export default function CatProfile() {
                 {c}
               </span>
             ))}
+            {cat.isResident && (
+              <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-indigo-400/50">
+                Resident (Hidden)
+              </span>
+            )}
+            {cat.isResidentPet && (
+              <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-indigo-400/50">
+                Resident Pet
+              </span>
+            )}
+            {cat.isResident && (
+              <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-indigo-400/50">
+                Resident (Hidden)
+              </span>
+            )}
             {cat.isResidentPet && (
               <span className="bg-indigo-500/90 text-white px-3 py-1 rounded-full text-sm font-bold backdrop-blur-md shadow-sm border border-indigo-400/50">
                 Resident Pet
@@ -836,8 +851,8 @@ export default function CatProfile() {
           <p className="text-sm font-medium text-white/80 flex items-center gap-2 mb-4">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]"></span>
             Last seen{" "}
-            {cat.locationName
-              ? `near ${cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}`
+            {(cat.isResident) ? "in a protected neighborhood" : cat.locationName
+              ? `near ${(cat.isResident) ? "in a protected neighborhood" : cat.locationName.length > 18 ? cat.locationName.substring(0, 18) + "..." : cat.locationName}`
               : "recently"}
           </p>
           

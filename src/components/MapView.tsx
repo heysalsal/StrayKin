@@ -39,6 +39,7 @@ import { CustomIcon } from "./CustomIcon";
 import { AdBanner } from "./AdBanner";
 import { useSettings } from "../context/SettingsContext";
 import { useError } from "../context/ErrorContext";
+import { triggerAppRating } from "./AppRatingModal";
 import * as cocoSsd from "@tensorflow-models/coco-ssd";
 import "@tensorflow/tfjs";
 
@@ -815,6 +816,12 @@ export default function MapView() {
       }
       
       setIsModalOpen(false);
+
+      // Trigger app rating prompt after submitting a stray
+      setTimeout(() => {
+        triggerAppRating();
+      }, 1500);
+
       if (titleToAward) {
          setEarnedTitle(titleToAward);
       } else {
@@ -1134,7 +1141,7 @@ export default function MapView() {
           disableClusteringAtZoom={18}
         >
           {cats
-            .filter((cat) => cat.status !== "rejected")
+            .filter((cat) => cat.status !== "rejected" && !cat.isResident)
             .filter(() => mapFilters.stray)
             .map((cat) => (
               <Marker

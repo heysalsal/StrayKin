@@ -22,7 +22,11 @@ export const preloadAiModel = async () => {
     }
   }
 
-  modelPromise = cocoSsd.load(config);
+  modelPromise = cocoSsd.load(config).catch((err) => {
+    console.warn("Failed to load local AI model, falling back to web model...", err);
+    return cocoSsd.load();
+  });
+  
   try {
     cachedModel = await modelPromise;
     console.log("Model preloaded successfully.");
@@ -43,7 +47,12 @@ export const processAiQueue = async () => {
       console.log(`AI checking pending submission ${sub.id}`);
       const { isValid, message, error } = await checkIsAnimal(sub.imageSrc);
       
-      if (isValid || error) {
+      if (error) {
+        console.warn(`Pending submission ${sub.id} encountered an AI error, will retry later: ${message}`);
+        continue;
+      }
+
+      if (isValid) {
         // Submit to backend
         try {
           const res = await fetch("/api/submit-for-review", {
@@ -135,7 +144,12 @@ export const checkIsAnimal = async (imageSrc: string): Promise<{isValid: boolean
             config = { modelUrl: localUrl };
           }
         }
-        cachedModel = await cocoSsd.load(config);
+        try {
+          cachedModel = await cocoSsd.load(config);
+        } catch (err) {
+          console.warn("Failed to load local model, falling back to web model:", err);
+          cachedModel = await cocoSsd.load();
+        }
         console.log("Model loaded.");
       }
     }

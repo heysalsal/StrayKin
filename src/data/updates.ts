@@ -1,5 +1,16 @@
 export const APP_UPDATES = [
   {
+    id: "v1.3.0",
+    date: "September 23, 2026",
+    title: "Seamless Auto-Updates & Experience Rating",
+    changes: [
+      "Instant Auto-Update & Cache Buster: No more blank screens or manual app refreshes when new updates arrive.",
+      "Interactive Rating System: Easily share feedback and feature suggestions right after reporting a stray.",
+      "Enhanced PWA Reliability: Improved offline caching and network-first navigation for instant page loads.",
+      "Performance and navigation stability optimizations across all devices."
+    ]
+  },
+  {
     id: "v1.2.0",
     date: "August 3, 2026",
     title: "Production Ready & UI Enhancements",
